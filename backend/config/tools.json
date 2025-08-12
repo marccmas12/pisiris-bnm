@@ -1,0 +1,34 @@
+[
+  {
+    "value": "ECAP",
+    "desc": "ECAP"
+  },
+  {
+    "value": "PXM",
+    "desc": "Programació per motius - HES"
+  },
+  {
+    "value": "AIN",
+    "desc": "Alertes i Notificacions - HES"
+  },
+  {
+    "value": "CAM",
+    "desc": "Centre d'Ajuda - HES"
+  },
+  {
+    "value": "AXIA",
+    "desc": "Axia | Suport clínic - HES"
+  },
+  {
+    "value": "LAND_MED",
+    "desc": "Pàgina d'inici Medicina"
+  },
+  {
+    "value": "LAND_INF",
+    "desc": "Pàgina d'inici Infermeria"
+  },
+  {
+    "value": "LAND_GIS",
+    "desc": "Pàgina d'inici Administratiu"
+  }
+] 

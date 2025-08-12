@@ -1,0 +1,34 @@
+[
+  {
+    "value": "created",
+    "desc": "Creada"
+  },
+  {
+    "value": "reviewed",
+    "desc": "Revisada"
+  },
+  {
+    "value": "discarted",
+    "desc": "Descartada"
+  },
+  {
+    "value": "resolving",
+    "desc": "En resolució"
+  },
+  {
+    "value": "notified",
+    "desc": "Notificada"
+  },
+  {
+    "value": "solved",
+    "desc": "Resolta"
+  },
+  {
+    "value": "closed",
+    "desc": "Tancada"
+  },
+  {
+    "value": "deleted",
+    "desc": "Eliminada"
+  }
+]

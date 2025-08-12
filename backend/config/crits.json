@@ -1,0 +1,18 @@
+[
+  {
+    "value": "low",
+    "desc": "Baixa"
+  },
+  {
+    "value": "mid",
+    "desc": "Mitja"
+  },
+  {
+    "value": "high",
+    "desc": "Alta"
+  },
+  {
+    "value": "critical",
+    "desc": "Crítica"
+  }
+] 

@@ -1,0 +1,147 @@
+.navigation {
+  background-color: #fff;
+  border-bottom: 1px solid #e9ecef;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.nav-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+}
+
+.brand-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #212529;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.brand-title:hover {
+  color: #007bff;
+}
+
+.nav-menu {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.nav-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  background-color: transparent;
+  color: #495057;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.nav-button:hover {
+  background-color: #f8f9fa;
+  color: #007bff;
+}
+
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.user-greeting {
+  display: flex;
+  align-items: center;
+}
+
+.greeting-text {
+  font-weight: 500;
+  color: #495057;
+  font-size: 0.875rem;
+  margin-right: 8px;
+}
+
+.user-avatar-container {
+  display: flex;
+  align-items: center;
+}
+
+.user-dropdown {
+  position: relative;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.username {
+  font-weight: 500;
+  color: #495057;
+  font-size: 0.875rem;
+}
+
+.permission-level {
+  font-size: 0.75rem;
+  color: #6c757d;
+  background-color: #f8f9fa;
+  padding: 0.125rem 0.5rem;
+  border-radius: 12px;
+}
+
+.logout-button {
+  padding: 0.5rem 1rem;
+  border: 1px solid #dc3545;
+  background-color: transparent;
+  color: #dc3545;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.logout-button:hover {
+  background-color: #dc3545;
+  color: white;
+}
+
+@media (max-width: 768px) {
+  .nav-container {
+    flex-direction: column;
+    height: auto;
+    padding: 1rem;
+    gap: 1rem;
+  }
+  
+  .nav-menu {
+    order: 2;
+  }
+  
+  .nav-user {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .brand-title {
+    font-size: 1.125rem;
+  }
+} 
