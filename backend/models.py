@@ -21,6 +21,7 @@ class UserUpdate(BaseModel):
     surnames: Optional[str] = None
     permission_level: Optional[int] = None
     default_center_id: Optional[int] = None
+    is_active: Optional[bool] = None
     password: Optional[str] = None
 
 class User(UserBase):
@@ -122,6 +123,7 @@ class TicketWithRelations(BaseModel):
     pathway: str
     supports: int
     attached: Optional[List[FileAttachment]] = None
+    comments_count: Optional[int] = 0  # Number of comments for this ticket
     created_by_user: 'User'
     status: 'Status'
     crit: 'Crit'
@@ -216,4 +218,35 @@ class GroupedModification(BaseModel):
 
 class GroupedModificationListResponse(BaseModel):
     modifications: List[GroupedModification]
-    total: int 
+    total: int
+
+# Comment models
+class CommentBase(BaseModel):
+    content: str
+
+class CommentCreate(CommentBase):
+    ticket_id: str
+
+class Comment(CommentBase):
+    id: int
+    ticket_id: str
+    user_id: int
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class CommentWithUser(Comment):
+    user: User
+
+class CommentListResponse(BaseModel):
+    comments: List[CommentWithUser]
+    total: int
+
+# User management response models
+class UserListResponse(BaseModel):
+    users: List[User]
+    total: int
+
+class UserWithTickets(User):
+    tickets: List[TicketWithRelations]
+    total_tickets: int

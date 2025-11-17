@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TicketWithRelations, Status, Crit, Center, Tool } from '../types';
 import { ticketsAPI, referenceAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { 
-  Eye, 
   Edit, 
   Trash2, 
   Plus, 
@@ -17,37 +16,204 @@ import {
   MoreHorizontal,
   AlertTriangle,
   AlertCircle,
-  AlertOctagon
+  AlertOctagon,
+  Search,
+  X,
+  MessageSquare
 } from 'lucide-react';
 import FilterDialog, { FilterValues } from './FilterDialog';
 import FilterBadge from './FilterBadge';
 import './TicketTable.css';
 
 const TicketTable: React.FC = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Helper function to initialize state from URL parameters (called synchronously)
+  const getInitialStateFromURL = () => {
+    const typeParam = searchParams.get('type') as 'incidence' | 'suggestion' | null;
+    const contentType = (typeParam === 'incidence' || typeParam === 'suggestion') ? typeParam : 'incidence';
+
+    const pageParam = searchParams.get('page');
+    const currentPage = pageParam ? (() => {
+      const page = parseInt(pageParam, 10);
+      return (!isNaN(page) && page > 0) ? page : 1;
+    })() : 1;
+
+    const searchQuery = searchParams.get('search') || '';
+    const showHidden = searchParams.get('showHidden') === 'true';
+
+    const sortByParam = searchParams.get('sortBy');
+    const sortOrderParam = searchParams.get('sortOrder');
+    const sortConfig = (sortByParam && sortOrderParam) ? {
+      field: sortByParam,
+      order: sortOrderParam as 'asc' | 'desc'
+    } : null;
+
+    // Parse filters from URL
+    const filters: FilterValues = {};
+    const statusIdParam = searchParams.get('status_id');
+    if (statusIdParam) {
+      const statusId = parseInt(statusIdParam, 10);
+      if (!isNaN(statusId)) filters.status_id = statusId;
+    }
+    const critIdParam = searchParams.get('crit_id');
+    if (critIdParam) {
+      const critId = parseInt(critIdParam, 10);
+      if (!isNaN(critId)) filters.crit_id = critId;
+    }
+    const toolIdParam = searchParams.get('tool_id');
+    if (toolIdParam) {
+      const toolId = parseInt(toolIdParam, 10);
+      if (!isNaN(toolId)) filters.tool_id = toolId;
+    }
+    const centerIdParam = searchParams.get('center_id');
+    if (centerIdParam) {
+      const centerId = parseInt(centerIdParam, 10);
+      if (!isNaN(centerId)) filters.center_id = centerId;
+    }
+    const dateFromParam = searchParams.get('date_from');
+    if (dateFromParam) filters.date_from = dateFromParam;
+    const dateToParam = searchParams.get('date_to');
+    if (dateToParam) filters.date_to = dateToParam;
+
+    return { contentType, currentPage, searchQuery, showHidden, sortConfig, filters };
+  };
+
+  // Initialize state from URL parameters synchronously
+  const initialState = getInitialStateFromURL();
+
+  const [contentType, setContentType] = useState<'incidence' | 'suggestion'>(initialState.contentType);
+  const [filters, setFilters] = useState<FilterValues>(initialState.filters);
+  const [sortConfig, setSortConfig] = useState<{
+    field: string;
+    order: 'asc' | 'desc';
+  } | null>(initialState.sortConfig);
+  const [isFilterDialogOpen, setIsFilterDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState(initialState.searchQuery);
+  const [showHidden, setShowHidden] = useState(initialState.showHidden);
+  const [currentPage, setCurrentPage] = useState(initialState.currentPage);
   const [tickets, setTickets] = useState<TicketWithRelations[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize] = useState(10);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [crits, setCrits] = useState<Crit[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
-  const [contentType, setContentType] = useState<'incidence' | 'suggestion'>('incidence');
-  const [filters, setFilters] = useState<FilterValues>({});
-  const [sortConfig, setSortConfig] = useState<{
-    field: string;
-    order: 'asc' | 'desc';
-  } | null>(null);
-  const [isFilterDialogOpen, setIsFilterDialogOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const wasSearchInputFocusedRef = useRef(false);
+  const cursorPositionRef = useRef<number | null>(null);
   const [descriptionPopover, setDescriptionPopover] = useState<string | null>(null);
   const [actionDropdown, setActionDropdown] = useState<string | null>(null);
   const [popoverPosition, setPopoverPosition] = useState<{top: boolean, left: boolean, right: boolean, x: number, y: number}>({top: false, left: false, right: false, x: 0, y: 0});
   const [dropdownPosition, setDropdownPosition] = useState<{top: boolean, left: boolean, x: number, y: number}>({top: false, left: false, x: 0, y: 0});
 
-  const { user } = useAuth();
-  const navigate = useNavigate();
+  // Sync state from URL when URL changes (for browser back/forward)
+  // Use a ref to track if this is the initial mount
+  const isInitialMount = useRef(true);
+  const prevSearchParamsString = useRef(searchParams.toString());
+  
+  useEffect(() => {
+    // Skip on initial mount since we already initialized from URL synchronously
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      prevSearchParamsString.current = searchParams.toString();
+      return;
+    }
+
+    // Only sync if URL actually changed (not from our own updates)
+    const currentParamsString = searchParams.toString();
+    if (currentParamsString === prevSearchParamsString.current) {
+      return;
+    }
+    prevSearchParamsString.current = currentParamsString;
+
+    const urlState = getInitialStateFromURL();
+    
+    // Update state from URL (for browser back/forward)
+    setContentType(urlState.contentType);
+    setCurrentPage(urlState.currentPage);
+    setSearchQuery(urlState.searchQuery);
+    setShowHidden(urlState.showHidden);
+    setSortConfig(urlState.sortConfig);
+    setFilters(urlState.filters);
+  }, [searchParams]); // Only re-run when searchParams object changes
+
+  // Helper function to update URL with current state
+  const updateURL = useCallback((updates: {
+    type?: 'incidence' | 'suggestion';
+    page?: number;
+    search?: string;
+    showHidden?: boolean;
+    sortBy?: string | null;
+    sortOrder?: string | null;
+    filters?: FilterValues;
+  }) => {
+    const newParams = new URLSearchParams(searchParams);
+
+    if (updates.type !== undefined) {
+      if (updates.type === 'incidence') {
+        newParams.set('type', 'incidence');
+      } else {
+        newParams.set('type', 'suggestion');
+      }
+    }
+
+    if (updates.page !== undefined) {
+      if (updates.page === 1) {
+        newParams.delete('page');
+      } else {
+        newParams.set('page', updates.page.toString());
+      }
+    }
+
+    if (updates.search !== undefined) {
+      if (updates.search === '') {
+        newParams.delete('search');
+      } else {
+        newParams.set('search', updates.search);
+      }
+    }
+
+    if (updates.showHidden !== undefined) {
+      if (updates.showHidden) {
+        newParams.set('showHidden', 'true');
+      } else {
+        newParams.delete('showHidden');
+      }
+    }
+
+    if (updates.sortBy !== undefined) {
+      if (updates.sortBy === null) {
+        newParams.delete('sortBy');
+        newParams.delete('sortOrder');
+      } else {
+        newParams.set('sortBy', updates.sortBy);
+        if (updates.sortOrder) {
+          newParams.set('sortOrder', updates.sortOrder);
+        }
+      }
+    }
+
+    if (updates.filters !== undefined) {
+      // Remove existing filter params
+      ['status_id', 'crit_id', 'tool_id', 'center_id', 'date_from', 'date_to'].forEach(key => {
+        newParams.delete(key);
+      });
+
+      // Add new filter params
+      Object.entries(updates.filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+          newParams.set(key, value.toString());
+        }
+      });
+    }
+
+    setSearchParams(newParams, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const loadReferenceData = useCallback(async () => {
     try {
@@ -81,7 +247,9 @@ const TicketTable: React.FC = () => {
         filters.date_from,
         filters.date_to,
         sortConfig?.field,
-        sortConfig?.order
+        sortConfig?.order,
+        searchQuery?.trim() || undefined,
+        showHidden
       );
       setTickets(response.tickets);
       setTotalPages(Math.ceil(response.total / pageSize));
@@ -90,7 +258,7 @@ const TicketTable: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, pageSize, filters, contentType, sortConfig]);
+  }, [currentPage, pageSize, filters, contentType, sortConfig, searchQuery, showHidden]);
 
   useEffect(() => {
     loadReferenceData();
@@ -100,15 +268,32 @@ const TicketTable: React.FC = () => {
     loadTickets();
   }, [loadTickets]);
 
+  // Maintain focus on search input after re-renders when user is typing
+  useEffect(() => {
+    if (wasSearchInputFocusedRef.current && searchInputRef.current) {
+      // Restore focus and cursor position after re-render
+      const position = cursorPositionRef.current ?? searchQuery.length;
+      searchInputRef.current.focus();
+      // Use requestAnimationFrame to ensure DOM is updated
+      requestAnimationFrame(() => {
+        if (searchInputRef.current) {
+          searchInputRef.current.setSelectionRange(position, position);
+        }
+      });
+    }
+  }, [tickets, searchQuery]);
+
   const handleApplyFilters = (newFilters: FilterValues) => {
     setFilters(newFilters);
     setCurrentPage(1);
+    updateURL({ filters: newFilters, page: 1 });
   };
 
   const handleRemoveFilter = (filterKey: keyof FilterValues) => {
     setFilters(prev => {
       const newFilters = { ...prev };
       delete newFilters[filterKey];
+      updateURL({ filters: newFilters, page: 1 });
       return newFilters;
     });
     setCurrentPage(1);
@@ -117,6 +302,7 @@ const TicketTable: React.FC = () => {
   const handleClearAllFilters = () => {
     setFilters({});
     setCurrentPage(1);
+    updateURL({ filters: {}, page: 1 });
   };
 
   const handleSort = (field: string) => {
@@ -130,6 +316,7 @@ const TicketTable: React.FC = () => {
             field,
             order: 'asc'
           };
+      updateURL({ sortBy: newConfig.field, sortOrder: newConfig.order, page: 1 });
       return newConfig;
     });
     setCurrentPage(1);
@@ -144,13 +331,11 @@ const TicketTable: React.FC = () => {
       : <ChevronDown size={16} className="sort-icon active" />;
   };
 
-  const handleContentTypeChange = (type: 'incidence' | 'suggestion') => {
-    setContentType(type);
-    setCurrentPage(1);
-  };
-
   const handleViewTicket = (ticketId: string) => {
-    navigate(`/tickets/${ticketId}`);
+    // Preserve current query parameters when navigating to ticket detail
+    const currentParams = searchParams.toString();
+    const url = currentParams ? `/tickets/${ticketId}?return=${encodeURIComponent(`/tickets?${currentParams}`)}` : `/tickets/${ticketId}`;
+    navigate(url);
   };
 
   const handleEditTicket = (ticketId: string) => {
@@ -191,20 +376,22 @@ const TicketTable: React.FC = () => {
     }
   };
 
+  const getCritColorClass = (critValue: string) => {
+    switch (critValue) {
+      case 'low': return 'crit-low';
+      case 'mid': return 'crit-mid';
+      case 'high': return 'crit-high';
+      case 'critical': return 'crit-critical';
+      default: return 'crit-low';
+    }
+  };
+
   const getCritTooltip = (critValue: string) => {
     const crit = crits.find(c => c.value === critValue);
     return crit?.desc || critValue;
   };
 
-  const handleDescriptionClick = (description: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    
-    if (descriptionPopover === description) {
-      setDescriptionPopover(null);
-      setPopoverPosition({top: false, left: false, right: false, x: 0, y: 0});
-      return;
-    }
-
+  const handleDescriptionHover = (description: string, event: React.MouseEvent) => {
     // Calculate position
     const button = event.currentTarget as HTMLElement;
     const rect = button.getBoundingClientRect();
@@ -233,6 +420,11 @@ const TicketTable: React.FC = () => {
       y: y
     });
     setDescriptionPopover(description);
+  };
+
+  const handleDescriptionLeave = () => {
+    setDescriptionPopover(null);
+    setPopoverPosition({top: false, left: false, right: false, x: 0, y: 0});
   };
 
   const handleActionDropdown = (ticketId: string, event: React.MouseEvent) => {
@@ -266,50 +458,12 @@ const TicketTable: React.FC = () => {
     setActionDropdown(ticketId);
   };
 
-  const closePopovers = () => {
-    setDescriptionPopover(null);
-    setActionDropdown(null);
-    setPopoverPosition({top: false, left: false, right: false, x: 0, y: 0});
-    setDropdownPosition({top: false, left: false, x: 0, y: 0});
-  };
-
-
-
   if (loading && tickets.length === 0) {
     return <div className="loading">Loading tickets...</div>;
   }
 
   return (
-    <div className="ticket-table-container" onClick={closePopovers}>
-      <div className="table-header">
-        <div className="header-content">
-          <h2>{contentType === 'incidence' ? 'Incidències' : 'Suggeriments'}</h2>
-          <div className="content-switcher">
-            <button
-              className={`switcher-button ${contentType === 'incidence' ? 'active' : ''}`}
-              onClick={() => handleContentTypeChange('incidence')}
-            >
-              Incidències
-            </button>
-            <button
-              className={`switcher-button ${contentType === 'suggestion' ? 'active' : ''}`}
-              onClick={() => handleContentTypeChange('suggestion')}
-            >
-              Suggeriments
-            </button>
-          </div>
-        </div>
-        {user && user.permission_level <= 2 && (
-          <button 
-            className="create-button"
-            onClick={() => navigate(`/tickets/create/${contentType}`)}
-          >
-            <Plus size={16} />
-            Crear {contentType === 'incidence' ? 'Incidència' : 'Suggeriment'}
-          </button>
-        )}
-      </div>
-
+    <div className="ticket-table-container">
       {error && <div className="error-message">{error}</div>}
 
       <div className="filter-controls">
@@ -320,6 +474,88 @@ const TicketTable: React.FC = () => {
           <Filter size={16} />
           Filtres
         </button>
+        <div className="search-bar-container">
+          <div className="search-input-wrapper">
+            <Search size={16} className="search-icon" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              className="search-input"
+              placeholder="Buscar en títol, descripció, eina, persones, notificador, usuari, ID de ticket i número de ticket..."
+              value={searchQuery}
+              onFocus={(e) => {
+                wasSearchInputFocusedRef.current = true;
+                cursorPositionRef.current = e.target.selectionStart;
+              }}
+              onBlur={() => {
+                // Only mark as unfocused if the user actually clicked away (not just re-render)
+                setTimeout(() => {
+                  if (document.activeElement !== searchInputRef.current) {
+                    wasSearchInputFocusedRef.current = false;
+                    cursorPositionRef.current = null;
+                  }
+                }, 100);
+              }}
+              onKeyUp={(e) => {
+                // Update cursor position after any key press
+                if (searchInputRef.current) {
+                  cursorPositionRef.current = searchInputRef.current.selectionStart;
+                }
+              }}
+              onMouseUp={(e) => {
+                // Update cursor position after mouse click
+                if (searchInputRef.current) {
+                  cursorPositionRef.current = searchInputRef.current.selectionStart;
+                }
+              }}
+              onChange={(e) => {
+                wasSearchInputFocusedRef.current = true;
+                // Save cursor position from the input element
+                const target = e.target as HTMLInputElement;
+                // The browser automatically adjusts cursor position, so use the current position
+                cursorPositionRef.current = target.selectionStart;
+                const value = target.value;
+                setSearchQuery(value);
+                setCurrentPage(1);
+                updateURL({ search: value, page: 1 });
+              }}
+            />
+            {searchQuery && (
+              <button
+                className="search-clear-button"
+                onClick={() => {
+                  setSearchQuery('');
+                  setCurrentPage(1);
+                  updateURL({ search: '', page: 1 });
+                }}
+                title="Netejar cerca"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+        <button
+          className={`toggle-hidden-button ${showHidden ? 'active' : ''}`}
+          onClick={() => {
+            const newValue = !showHidden;
+            setShowHidden(newValue);
+            setCurrentPage(1);
+            updateURL({ showHidden: newValue, page: 1 });
+          }}
+          title={showHidden ? "Amagar tickets ocults" : "Mostrar tickets ocults"}
+        >
+          Mostra els ocults
+        </button>
+        {user && user.permission_level <= 3 && (
+          <button 
+            className="create-button"
+            onClick={() => navigate(`/tickets/create/${contentType}`)}
+          >
+            <Plus size={16} />
+            Crear {contentType === 'incidence' ? 'Incidència' : 'Suggeriment'}
+          </button>
+        )}
       </div>
 
       <FilterBadge
@@ -333,7 +569,7 @@ const TicketTable: React.FC = () => {
         <table className="ticket-table">
           <thead>
             <tr>
-              <th>Criticitat</th>
+              <th> </th>
               <th>ID</th>
               <th 
                 className="sortable-header"
@@ -366,15 +602,20 @@ const TicketTable: React.FC = () => {
               <th>Eina</th>
               <th>Adjunts</th>
               <th>URL</th>
+              <th>Comentaris</th>
               <th>Accions</th>
             </tr>
           </thead>
           <tbody>
             {tickets.map(ticket => (
-              <tr key={ticket.id}>
+              <tr 
+                key={ticket.id}
+                className="ticket-row"
+                onClick={() => handleViewTicket(ticket.id)}
+              >
                 <td className="criticity-cell">
                   <div 
-                    className="criticity-icon"
+                    className={`criticity-icon ${getCritColorClass(ticket.crit.value)}`}
                     title={getCritTooltip(ticket.crit.value)}
                   >
                     {getCritIcon(ticket.crit.value)}
@@ -384,13 +625,15 @@ const TicketTable: React.FC = () => {
                 <td className="title-cell">{ticket.title}</td>
                 <td className="description-cell">
                   {ticket.description && (
-                    <button
+                    <div
                       className="description-button"
-                      onClick={(e) => handleDescriptionClick(ticket.description!, e)}
+                      onMouseEnter={(e) => handleDescriptionHover(ticket.description!, e)}
+                      onMouseLeave={handleDescriptionLeave}
+                      onClick={(e) => e.stopPropagation()}
                       title="Veure descripció"
                     >
                       <Info size={16} />
-                    </button>
+                    </div>
                   )}
                   {descriptionPopover === ticket.description && (
                     <div className={`description-popover ${popoverPosition.top ? 'top' : ''} ${popoverPosition.left ? 'left' : ''} ${popoverPosition.right ? 'right' : ''}`} style={{ top: popoverPosition.y, left: popoverPosition.x }}>
@@ -422,7 +665,10 @@ const TicketTable: React.FC = () => {
                   {ticket.url ? (
                     <button
                       className="url-button"
-                      onClick={() => window.open(ticket.url, '_blank')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(ticket.url, '_blank');
+                      }}
                       title={ticket.url}
                     >
                       <ExternalLink size={16} />
@@ -431,16 +677,19 @@ const TicketTable: React.FC = () => {
                     <span className="no-url">-</span>
                   )}
                 </td>
-                <td>
+                <td className="comments-cell">
+                  {ticket.comments_count && ticket.comments_count > 0 ? (
+                    <div className="comments-indicator">
+                      <MessageSquare size={16} />
+                      <span className="comment-count">{ticket.comments_count}</span>
+                    </div>
+                  ) : (
+                    <span className="no-comments">-</span>
+                  )}
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
                   <div className="action-buttons">
-                    <button
-                      className="action-button view"
-                      onClick={() => handleViewTicket(ticket.id)}
-                      title="Veure detalls"
-                    >
-                      <Eye size={16} />
-                    </button>
-                    {user && user.permission_level <= 1 && (
+                    {user && user.permission_level <= 2 && (
                       <div className="multiaction-container">
                         <button
                           className="action-button multiaction"
@@ -486,7 +735,11 @@ const TicketTable: React.FC = () => {
           <button
             className="pagination-button"
             disabled={currentPage === 1}
-            onClick={() => setCurrentPage(currentPage - 1)}
+            onClick={() => {
+              const newPage = currentPage - 1;
+              setCurrentPage(newPage);
+              updateURL({ page: newPage });
+            }}
           >
             Anterior
           </button>
@@ -496,7 +749,11 @@ const TicketTable: React.FC = () => {
           <button
             className="pagination-button"
             disabled={currentPage === totalPages}
-            onClick={() => setCurrentPage(currentPage + 1)}
+            onClick={() => {
+              const newPage = currentPage + 1;
+              setCurrentPage(newPage);
+              updateURL({ page: newPage });
+            }}
           >
             Següent
           </button>

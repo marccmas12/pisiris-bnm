@@ -6,6 +6,7 @@ import {
   TicketCreate,
   TicketUpdate,
   UserCreate,
+  UserUpdate,
   LoginForm,
   AuthResponse,
   TicketListResponse,
@@ -13,7 +14,10 @@ import {
   Status,
   Crit,
   Center,
-  Tool
+  Tool,
+  CommentWithUser,
+  CommentCreate,
+  CommentListResponse
 } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000';
@@ -89,8 +93,27 @@ export const usersAPI = {
     return response.data;
   },
 
-  updateUser: async (userId: number, userUpdate: Partial<User> & { password?: string }): Promise<User> => {
+  updateUser: async (userId: number, userUpdate: UserUpdate): Promise<User> => {
     const response = await api.put(`/users/${userId}`, userUpdate);
+    return response.data;
+  },
+
+  deleteUser: async (userId: number): Promise<void> => {
+    await api.delete(`/users/${userId}`);
+  },
+
+  resetUserPassword: async (userId: number): Promise<{ message: string; default_password: string }> => {
+    const response = await api.post(`/users/${userId}/reset-password`);
+    return response.data;
+  },
+
+  getUserTickets: async (userId: number): Promise<TicketWithRelations[]> => {
+    const response = await api.get(`/users/${userId}/tickets`);
+    return response.data;
+  },
+
+  toggleUserStatus: async (userId: number, isActive: boolean): Promise<User> => {
+    const response = await api.put(`/users/${userId}`, { is_active: isActive });
     return response.data;
   },
 };
@@ -113,7 +136,9 @@ export const ticketsAPI = {
     date_from?: string,
     date_to?: string,
     sort_by?: string,
-    sort_order?: string
+    sort_order?: string,
+    search?: string,
+    show_hidden?: boolean
   ): Promise<TicketListResponse> => {
     const params = new URLSearchParams();
     params.append('skip', skip.toString());
@@ -127,6 +152,8 @@ export const ticketsAPI = {
     if (date_to) params.append('date_to', date_to);
     if (sort_by) params.append('sort_by', sort_by);
     if (sort_order) params.append('sort_order', sort_order);
+    if (search) params.append('search', search);
+    if (show_hidden) params.append('show_hidden', 'true');
 
     const response = await api.get(`/tickets/?${params.toString()}`);
     return response.data;
@@ -236,4 +263,39 @@ export const referenceAPI = {
   },
 };
 
+// Comments
+export const commentsAPI = {
+  createComment: async (ticketId: string, comment: CommentCreate): Promise<CommentWithUser> => {
+    const response = await api.post(`/tickets/${ticketId}/comments`, comment);
+    return response.data;
+  },
+
+  getTicketComments: async (ticketId: string): Promise<CommentListResponse> => {
+    const response = await api.get(`/tickets/${ticketId}/comments`);
+    return response.data;
+  },
+};
+
+// Dashboard
+export interface DashboardStatistics {
+  total_tickets: number;
+  open_tickets: number;
+  tickets_by_type: { [key: string]: number };
+  tickets_by_criticality: { [key: string]: number };
+  tickets_by_status: { [key: string]: number };
+  tickets_by_center: { [key: string]: number };
+  tickets_by_tool: { [key: string]: number };
+  active_users: number;
+  total_users: number;
+  tickets_trend: Array<{ date: string; count: number }>;
+}
+
+export const dashboardAPI = {
+  getStatistics: async (): Promise<DashboardStatistics> => {
+    const response = await api.get('/dashboard/statistics');
+    return response.data;
+  },
+};
+
+export { api };
 export default api; 

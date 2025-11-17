@@ -615,7 +615,7 @@ const TicketForm: React.FC = () => {
                         >
                           <Download size={16} />
                         </a>
-                        {user && user.permission_level <= 1 ? (
+                        {user && user.permission_level <= 2 ? (
                           <button
                             type="button"
                             onClick={() => removeExistingAttachment(encodeURIComponent(attachment.path))}

@@ -2,9 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Login from './components/Login';
+import Dashboard from './components/Dashboard';
 import TicketTable from './components/TicketTable';
 import TicketForm from './components/TicketForm';
 import TicketDetail from './components/TicketDetail';
+import UserManagement from './components/UserManagement';
+import UserProfile from './components/UserProfile';
 import Navigation from './components/Navigation';
 import Footer from './components/Footer';
 import { User } from './types';
@@ -54,6 +57,14 @@ const AppContent: React.FC = () => {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/tickets"
             element={
               <ProtectedRoute>
@@ -93,7 +104,23 @@ const AppContent: React.FC = () => {
               </ProtectedRoute>
             }
           />
-          <Route path="/" element={<Navigate to="/tickets" replace />} />
+          <Route
+            path="/users"
+            element={
+              <ProtectedRoute>
+                <UserManagement />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/users/:id"
+            element={
+              <ProtectedRoute>
+                <UserProfile />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </main>
       <Footer />

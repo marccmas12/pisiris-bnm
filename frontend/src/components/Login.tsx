@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { X } from 'lucide-react';
 import logo from '../assets/images/Logo_DAPMN.jpeg';
 import './Login.css';
 
@@ -9,6 +10,7 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showInactiveModal, setShowInactiveModal] = useState(false);
   const { login, isAuthenticated, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
@@ -28,12 +30,17 @@ const Login: React.FC = () => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    setShowInactiveModal(false);
 
     try {
       await login(username, password);
       // After successful login, the useEffect will handle the redirect
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Login failed');
+      if (err.response?.data?.detail === 'user_inactive') {
+        setShowInactiveModal(true);
+      } else {
+        setError(err.response?.data?.detail || 'Login failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -91,6 +98,37 @@ const Login: React.FC = () => {
           </p>
         </form>
       </div>
+
+      {showInactiveModal && (
+        <div className="modal-overlay" onClick={() => setShowInactiveModal(false)}>
+          <div className="modal-content inactive-user-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Usuari desactivat</h2>
+              <button className="modal-close" onClick={() => setShowInactiveModal(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>
+                El vostre usuari ha estat desactivat. Si creieu que això és incorrecte, 
+                podeu contactar amb el responsable de l'aplicació per sol·licitar la reactivació.
+              </p>
+              <p>
+                Contacte: <a href="mailto:ticprimariabnm.ics@gencat.cat">ticprimariabnm.ics@gencat.cat</a>
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button 
+                type="button" 
+                onClick={() => setShowInactiveModal(false)} 
+                className="btn-primary"
+              >
+                Entesos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

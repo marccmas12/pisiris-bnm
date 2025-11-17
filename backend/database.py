@@ -29,6 +29,7 @@ class User(Base):
     # Relationships
     tickets_created = relationship("Ticket", back_populates="created_by_user")
     modifications = relationship("Modification", back_populates="user")
+    comments = relationship("Comment", back_populates="user")
     default_center = relationship("Center")
 
 class Ticket(Base):
@@ -63,6 +64,7 @@ class Ticket(Base):
     center = relationship("Center")
     tool = relationship("Tool")
     modifications = relationship("Modification", back_populates="ticket")
+    comments = relationship("Comment", back_populates="ticket")
 
 class Status(Base):
     __tablename__ = "status"
@@ -109,6 +111,19 @@ class Modification(Base):
     # Relationships
     ticket = relationship("Ticket", back_populates="modifications")
     user = relationship("User", back_populates="modifications")
+
+class Comment(Base):
+    __tablename__ = "comments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(String, ForeignKey("tickets.id"), nullable=False)  # String for hex-based IDs
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)  # Comment text
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # When comment was posted
+    
+    # Relationships
+    ticket = relationship("Ticket", back_populates="comments")
+    user = relationship("User", back_populates="comments")
 
 # Create tables
 def create_tables():

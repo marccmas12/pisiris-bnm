@@ -1,0 +1,36 @@
+.user-form-modal {
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.user-form-modal .form-section {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.user-form-modal .form-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.user-form-modal .form-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.user-form-modal .form-group input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.user-form-modal .form-group small {
+  display: block;
+  margin-top: 0.25rem;
+  color: #666;
+  font-size: 0.875rem;
+}
+

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { TicketWithRelations, GroupedModification } from '../types';
-import { ticketsAPI, modificationsAPI } from '../services/api';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { TicketWithRelations, GroupedModification, CommentWithUser } from '../types';
+import { ticketsAPI, modificationsAPI, commentsAPI, api } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import CommentForm from './CommentForm';
+import CommentList from './CommentList';
 import './TicketDetail.css';
 import { 
   ArrowLeft, 
@@ -10,6 +12,7 @@ import {
   History, 
   Paperclip, 
   Download, 
+  Eye,
   Calendar,
   Clock,
   User,
@@ -24,10 +27,13 @@ import {
 const TicketDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
 
   const [ticket, setTicket] = useState<TicketWithRelations | null>(null);
   const [modifications, setModifications] = useState<GroupedModification[]>([]);
+  const [comments, setComments] = useState<CommentWithUser[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showHistoricModal, setShowHistoricModal] = useState(false);
@@ -37,16 +43,32 @@ const TicketDetail: React.FC = () => {
 
     try {
       setLoading(true);
-      const [ticketData, modificationsData] = await Promise.all([
+      const [ticketData, modificationsData, commentsData] = await Promise.all([
         ticketsAPI.getTicket(id),
         modificationsAPI.getTicketModifications(id),
+        commentsAPI.getTicketComments(id),
       ]);
       setTicket(ticketData);
       setModifications(modificationsData.modifications);
+      setComments(commentsData.comments);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Error loading ticket');
     } finally {
       setLoading(false);
+    }
+  }, [id]);
+
+  const loadComments = useCallback(async () => {
+    if (!id) return;
+
+    try {
+      setCommentsLoading(true);
+      const commentsData = await commentsAPI.getTicketComments(id);
+      setComments(commentsData.comments);
+    } catch (err: any) {
+      console.error('Error loading comments:', err);
+    } finally {
+      setCommentsLoading(false);
     }
   }, [id]);
 
@@ -102,6 +124,63 @@ const TicketDetail: React.FC = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   };
 
+  const isViewableFile = (fileType: string) => {
+    const viewableTypes = ['pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+    const normalizedType = fileType.toLowerCase();
+    return viewableTypes.some(type => normalizedType.includes(type));
+  };
+
+  const handleDownload = async (path: string, filename: string) => {
+    if (!id) return;
+    try {
+      // Use the authenticated download endpoint
+      const response = await api.get(`/tickets/${id}/download/${path}`, {
+        responseType: 'blob',
+      });
+      
+      const blob = new Blob([response.data]);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error: any) {
+      console.error('Error downloading file:', error);
+      setError(error.response?.data?.detail || 'Error downloading file');
+    }
+  };
+
+  const handleView = async (path: string, contentType?: string) => {
+    if (!id) return;
+    try {
+      // Use the view endpoint which serves files for inline viewing
+      const response = await api.get(`/tickets/${id}/view/${path}`, {
+        responseType: 'blob',
+      });
+      
+      // Get content type from response headers or use provided one
+      const mimeType = response.headers['content-type'] || 
+                       response.headers['Content-Type'] || 
+                       contentType || 
+                       'application/octet-stream';
+      
+      // Create blob with correct MIME type for inline viewing
+      const blob = new Blob([response.data], { type: mimeType });
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      // Open in new tab - browser will display it inline based on content type
+      window.open(blobUrl, '_blank');
+      // Note: We don't revoke the URL immediately as the new window needs it
+      // It will be cleaned up when the window is closed
+    } catch (error: any) {
+      console.error('Error viewing file:', error);
+      setError(error.response?.data?.detail || 'Error viewing file');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -127,7 +206,15 @@ const TicketDetail: React.FC = () => {
             {/* Left side - Back button and ticket info */}
             <div className="flex items-center space-x-4">
               <button
-                onClick={() => navigate('/tickets')}
+                onClick={() => {
+                  // Check if there's a return URL parameter to preserve filters
+                  const returnUrl = searchParams.get('return');
+                  if (returnUrl) {
+                    navigate(decodeURIComponent(returnUrl));
+                  } else {
+                    navigate('/tickets');
+                  }
+                }}
                 className="p-2 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
               >
                 <ArrowLeft size={20} className="text-gray-600" />
@@ -149,18 +236,20 @@ const TicketDetail: React.FC = () => {
             <div className="flex items-center space-x-3">
               <button
                 onClick={() => setShowHistoricModal(true)}
-                className="p-2 rounded-full bg-blue-100 hover:bg-blue-200 transition-colors"
+                className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2"
                 title="Historic of changes"
               >
-                <History size={20} className="text-blue-600" />
+                <History size={16} className="text-gray-700" />
+                <span className="text-sm">Traçabilitat</span>
               </button>
-              {user && user.permission_level <= 1 && (
+              {user && user.permission_level <= 2 && (
                 <button
                   onClick={() => navigate(`/tickets/${ticket.id}/edit`)}
-                  className="p-2 rounded-full bg-green-100 hover:bg-green-200 transition-colors"
+                  className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors flex items-center space-x-2"
                   title="Edit ticket"
                 >
-                  <Edit size={20} className="text-green-600" />
+                  <Edit size={16} className="text-gray-700" />
+                  <span className="text-sm">Edita</span>
                 </button>
               )}
             </div>
@@ -210,23 +299,6 @@ const TicketDetail: React.FC = () => {
               </div>
             </div>
 
-            {/* URL Section */}
-            {ticket.url && (
-              <div className="bg-white rounded-lg shadow-sm border p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Enllaç</h3>
-                <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg">
-                  <a 
-                    href={ticket.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    className="text-blue-600 hover:text-blue-800 break-all font-mono"
-                  >
-                    {ticket.url}
-                  </a>
-                </div>
-              </div>
-            )}
-
             {/* Attachments Section */}
             {ticket.attached && ticket.attached.length > 0 && (
               <div className="bg-white rounded-lg shadow-sm border p-6">
@@ -234,32 +306,62 @@ const TicketDetail: React.FC = () => {
                   Adjunts ({ticket.attached.length})
                 </h3>
                 <div className="space-y-3">
-                  {ticket.attached.map((attachment, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <Paperclip size={16} className="text-gray-500" />
-                        <div>
-                          <p className="font-medium text-gray-900">
-                            {attachment.original_name || attachment.filename}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {formatFileSize(attachment.size)} • {attachment.file_type.toUpperCase()}
-                          </p>
+                  {ticket.attached.map((attachment, index) => {
+                    const canView = isViewableFile(attachment.file_type);
+                    return (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <Paperclip size={16} className="text-gray-500" />
+                          <div>
+                            <p className="font-medium text-gray-900">
+                              {attachment.original_name || attachment.filename}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {formatFileSize(attachment.size)} • {attachment.file_type.toUpperCase()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {canView && (
+                            <button
+                              onClick={() => handleView(attachment.path, attachment.content_type)}
+                              className="p-2 text-blue-600 hover:text-blue-800 transition-colors"
+                              title="View in new tab"
+                            >
+                              <Eye size={16} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDownload(attachment.path, attachment.original_name || attachment.filename)}
+                            className="p-2 text-blue-600 hover:text-blue-800 transition-colors"
+                            title="Download"
+                          >
+                            <Download size={16} />
+                          </button>
                         </div>
                       </div>
-                      <a
-                        href={ticketsAPI.getFileDownloadUrl(attachment.path)}
-                        download={attachment.original_name || attachment.filename}
-                        className="p-2 text-blue-600 hover:text-blue-800 transition-colors"
-                        title="Download"
-                      >
-                        <Download size={16} />
-                      </a>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
+
+            {/* Comments Section */}
+            <div className="bg-white rounded-lg shadow-sm border p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                Comentaris ({comments.length})
+              </h3>
+              
+              {/* Comment Form - Only visible for managers (permission_level <= 2) */}
+              {user && user.permission_level <= 2 && (
+                <CommentForm ticketId={ticket.id} onCommentPosted={loadComments} />
+              )}
+              
+              {/* Comments List */}
+              <div className={user && user.permission_level <= 2 ? "mt-6" : ""}>
+                <CommentList comments={comments} loading={commentsLoading} />
+              </div>
+            </div>
           </div>
 
           {/* Right side - Stats and attributes */}
@@ -348,6 +450,33 @@ const TicketDetail: React.FC = () => {
               </div>
             </div>
 
+            {/* URL Section */}
+            {ticket.url && (
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Enllaç</h3>
+                <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg">
+                  <a 
+                    href={ticket.url} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-blue-600 hover:text-blue-800 break-all font-mono"
+                  >
+                    {ticket.url}
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* Notifier Section */}
+            {ticket.notifier && (
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Notificador</h3>
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
+                  <p className="text-yellow-800 font-medium">{ticket.notifier}</p>
+                </div>
+              </div>
+            )}
+
             {/* People Section */}
             <div className="bg-white rounded-lg shadow-sm border p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Persones involucrades</h3>
@@ -362,16 +491,6 @@ const TicketDetail: React.FC = () => {
                 ))}
               </div>
             </div>
-
-            {/* Notifier Section */}
-            {ticket.notifier && (
-              <div className="bg-white rounded-lg shadow-sm border p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Notificador</h3>
-                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
-                  <p className="text-yellow-800 font-medium">{ticket.notifier}</p>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>

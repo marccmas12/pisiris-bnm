@@ -49,6 +49,7 @@ export interface Ticket {
 }
 
 export interface TicketWithRelations extends Ticket {
+  comments_count?: number;
   created_by_user: User;
   status: Status;
   crit: Crit;
@@ -129,7 +130,21 @@ export interface UserCreate {
   username: string;
   email: string;
   password: string;
+  name?: string;
+  surnames?: string;
   permission_level: number;
+  default_center_id?: number;
+}
+
+export interface UserUpdate {
+  username?: string;
+  email?: string;
+  name?: string;
+  surnames?: string;
+  permission_level?: number;
+  default_center_id?: number;
+  is_active?: boolean;
+  password?: string;
 }
 
 export interface LoginForm {
@@ -166,4 +181,43 @@ export interface GroupedModification {
 export interface GroupedModificationListResponse {
   modifications: GroupedModification[];
   total: number;
-} 
+}
+
+export interface Comment {
+  id: number;
+  ticket_id: string;
+  user_id: number;
+  content: string;
+  created_at: string;
+}
+
+export interface CommentWithUser extends Comment {
+  user: User;
+}
+
+export interface CommentCreate {
+  ticket_id: string;
+  content: string;
+}
+
+export interface CommentListResponse {
+  comments: CommentWithUser[];
+  total: number;
+}
+
+// User management interfaces
+export interface UserListResponse {
+  users: User[];
+  total: number;
+}
+
+export interface UserWithTickets extends User {
+  tickets: TicketWithRelations[];
+  total_tickets: number;
+}
+
+// Permission level constants (for reference)
+// Level 1: Admin (manage users + edit tickets)
+// Level 2: Editor (edit tickets, cannot manage users)
+// Level 3: Manager (create/view tickets)
+// Level 4: Viewer (view only)

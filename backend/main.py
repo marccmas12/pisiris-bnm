@@ -2,20 +2,23 @@ from fastapi import FastAPI, Depends, HTTPException, status, Query, UploadFile, 
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import or_, and_, func, String, case, select
 from typing import List, Optional
 from datetime import timedelta, datetime
 import uuid
 import os
 import shutil
 
-from database import get_db, create_tables, User, Ticket, Modification, Status, Crit, Center, Tool
+from database import get_db, create_tables, User, Ticket, Modification, Comment, Status, Crit, Center, Tool
 from models import (
     UserCreate, User as UserModel, TicketCreate, Ticket as TicketModel, 
     TicketUpdate, TicketWithRelations, ModificationCreate, Modification as ModificationModel,
     Token, Status as StatusModel, Crit as CritModel, Center as CenterModel, Tool as ToolModel,
-    TicketListResponse, ModificationListResponse, GroupedModificationListResponse, UserUpdate
+    TicketListResponse, ModificationListResponse, GroupedModificationListResponse, UserUpdate,
+    CommentCreate, Comment as CommentModel, CommentWithUser, CommentListResponse
 )
 from auth import (
     authenticate_user, create_access_token, get_current_active_user, 
@@ -63,6 +66,13 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Check if user is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="user_inactive",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
@@ -96,7 +106,11 @@ async def create_user(
         username=user.username,
         email=user.email,
         hashed_password=hashed_password,
-        permission_level=user.permission_level
+        permission_level=user.permission_level,
+        name=user.name,
+        surnames=user.surnames,
+        default_center_id=user.default_center_id,
+        is_active=True  # New users are active by default
     )
     db.add(db_user)
     db.commit()
@@ -119,7 +133,7 @@ async def update_current_user(
     db: Session = Depends(get_db)
 ):
     # Update only the fields that are provided
-    update_data = user_update.dict(exclude_unset=True)
+    update_data = user_update.model_dump(exclude_unset=True)
     
     # Handle password change separately
     if "password" in update_data:
@@ -148,7 +162,7 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     # Update only the fields that are provided
-    update_data = user_update.dict(exclude_unset=True)
+    update_data = user_update.model_dump(exclude_unset=True)
     
     # Handle password change separately
     if "password" in update_data:
@@ -162,6 +176,137 @@ async def update_user(
     db.commit()
     db.refresh(db_user)
     return db_user
+
+@app.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    check_permission(current_user, 1)  # Only level 1 (admin) can delete users
+    
+    # Prevent users from deleting themselves
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account"
+        )
+    
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if this is the last admin
+    if db_user.permission_level == 1:
+        admin_count = db.query(User).filter(User.permission_level == 1, User.is_active == True).count()
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete the last active admin user"
+            )
+    
+    db.delete(db_user)
+    db.commit()
+    return {"message": "User deleted successfully"}
+
+@app.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    check_permission(current_user, 1)  # Only level 1 (admin) can reset passwords
+    
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Extract email prefix (part before @) as default password
+    email_prefix = db_user.email.split('@')[0]
+    hashed_password = get_password_hash(email_prefix)
+    
+    db_user.hashed_password = hashed_password
+    db.commit()
+    db.refresh(db_user)
+    
+    return {
+        "message": "Password reset successfully",
+        "default_password": email_prefix
+    }
+
+@app.get("/users/{user_id}/tickets", response_model=List[TicketWithRelations])
+async def get_user_tickets(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    check_permission(current_user, 1)  # Only level 1 (admin) can view user tickets
+    
+    # Verify user exists
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get all tickets created by this user
+    tickets = db.query(Ticket).filter(Ticket.creator == user_id).order_by(Ticket.creation_date.desc()).all()
+    
+    # Convert to dictionaries with relations
+    ticket_dicts = []
+    for ticket in tickets:
+        ticket_dict = {
+            "id": ticket.id,
+            "type": ticket.type,
+            "title": ticket.title,
+            "ticket_num": ticket.ticket_num,
+            "description": ticket.description,
+            "url": ticket.url,
+            "status_id": ticket.status_id,
+            "crit_id": ticket.crit_id,
+            "center_id": ticket.center_id,
+            "tool_id": ticket.tool_id,
+            "creation_date": ticket.creation_date.isoformat() if ticket.creation_date else None,
+            "modify_date": ticket.modify_date.isoformat() if ticket.modify_date else None,
+            "resolution_date": ticket.resolution_date.isoformat() if ticket.resolution_date else None,
+            "delete_date": ticket.delete_date.isoformat() if ticket.delete_date else None,
+            "modify_reason": ticket.modify_reason,
+            "notifier": ticket.notifier,
+            "people": ticket.people,
+            "creator": ticket.creator,
+            "pathway": ticket.pathway,
+            "supports": ticket.supports,
+            "attached": ticket.attached,
+            "comments_count": db.query(func.count(Comment.id)).filter(Comment.ticket_id == ticket.id).scalar() or 0,
+            "status": {
+                "id": ticket.status.id,
+                "value": ticket.status.value,
+                "desc": ticket.status.desc
+            } if ticket.status else None,
+            "crit": {
+                "id": ticket.crit.id,
+                "value": ticket.crit.value,
+                "desc": ticket.crit.desc
+            } if ticket.crit else None,
+            "center": {
+                "id": ticket.center.id,
+                "value": ticket.center.value,
+                "desc": ticket.center.desc
+            } if ticket.center else None,
+            "tool": {
+                "id": ticket.tool.id,
+                "value": ticket.tool.value,
+                "desc": ticket.tool.desc
+            } if ticket.tool else None,
+            "created_by_user": {
+                "id": ticket.created_by_user.id,
+                "username": ticket.created_by_user.username,
+                "email": ticket.created_by_user.email,
+                "permission_level": ticket.created_by_user.permission_level,
+                "is_active": ticket.created_by_user.is_active
+            } if ticket.created_by_user else None
+        }
+        ticket_dicts.append(ticket_dict)
+    
+    return ticket_dicts
 
 # File upload endpoints
 @app.post("/tickets/{ticket_id}/upload")
@@ -350,7 +495,7 @@ async def get_ticket_attachments(
     db: Session = Depends(get_db)
 ):
     """Get detailed information about all attachments for a ticket"""
-    check_permission(current_user, 1)  # Level 1+ can view attachments
+    check_permission(current_user, 2)  # Level 2+ can view attachments
     
     # Verify ticket exists
     db_ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
@@ -400,6 +545,100 @@ async def get_ticket_attachments(
         "directory_structure": directory_info
     }
 
+@app.get("/tickets/{ticket_id}/view/{file_path:path}")
+async def view_attachment(
+    ticket_id: str,
+    file_path: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """View a file attachment from a ticket in browser (requires authentication)"""
+    check_permission(current_user, 2)  # Level 2+ can view files
+    
+    # Verify ticket exists
+    db_ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    # Construct full file path
+    full_path = os.path.join(UPLOADS_DIR, file_path)
+    
+    # Verify file exists
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Verify the file belongs to this ticket (security check)
+    # The file path should start with tickets/{ticket_id}/
+    if not file_path.startswith(f"tickets/{ticket_id}/"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get content type from attachment metadata or infer from file extension
+    attachments = db_ticket.attached or []
+    attachment = next((att for att in attachments if att.get("path") == file_path), None)
+    
+    if attachment and attachment.get("content_type"):
+        media_type = attachment.get("content_type")
+    else:
+        # Infer content type from file extension
+        import mimetypes
+        media_type, _ = mimetypes.guess_type(full_path)
+        if not media_type:
+            media_type = 'application/octet-stream'
+    
+    # Return file for inline viewing (no filename parameter = inline display)
+    return FileResponse(
+        path=full_path,
+        media_type=media_type
+    )
+
+@app.get("/tickets/{ticket_id}/download/{file_path:path}")
+async def download_attachment(
+    ticket_id: str,
+    file_path: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Download a file attachment from a ticket (requires authentication)"""
+    check_permission(current_user, 2)  # Level 2+ can download files
+    
+    # Verify ticket exists
+    db_ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not db_ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    # Construct full file path
+    full_path = os.path.join(UPLOADS_DIR, file_path)
+    
+    # Verify file exists
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Verify the file belongs to this ticket (security check)
+    # The file path should start with tickets/{ticket_id}/
+    if not file_path.startswith(f"tickets/{ticket_id}/"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Get original filename and content type from attachment metadata if available
+    attachments = db_ticket.attached or []
+    attachment = next((att for att in attachments if att.get("path") == file_path), None)
+    filename = attachment.get("original_name", os.path.basename(file_path)) if attachment else os.path.basename(file_path)
+    
+    # Get content type from attachment metadata or infer from file extension
+    if attachment and attachment.get("content_type"):
+        media_type = attachment.get("content_type")
+    else:
+        # Infer content type from file extension
+        import mimetypes
+        media_type, _ = mimetypes.guess_type(full_path)
+        if not media_type:
+            media_type = 'application/octet-stream'
+    
+    return FileResponse(
+        path=full_path,
+        filename=filename,
+        media_type=media_type
+    )
+
 @app.delete("/tickets/{ticket_id}/attachments/{filename:path}")
 async def delete_attachment(
     ticket_id: str,
@@ -409,7 +648,7 @@ async def delete_attachment(
 ):
     """Delete a file attachment from a ticket"""
     print(f"DEBUG: Delete attachment called by user {current_user.username} with permission level {current_user.permission_level}")
-    check_permission(current_user, 1)  # Only level 1 can delete files
+    check_permission(current_user, 2)  # Level 1 (admin) or 2 (editor) can delete files
     
     # Decode the URL-encoded filename
     import urllib.parse
@@ -588,15 +827,28 @@ async def get_tickets(
     date_to: Optional[str] = None,
     sort_by: Optional[str] = None,
     sort_order: Optional[str] = None,
+    search: Optional[str] = None,
+    show_hidden: bool = Query(False, description="Show hidden tickets (discarted, solved, closed, deleted)"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     query = db.query(Ticket)
     
+    # Apply regular filters first
     if status_id:
         query = query.filter(Ticket.status_id == status_id)
     if type:
         query = query.filter(Ticket.type == type)
+    
+    # Filter out hidden statuses by default (discarted, solved, closed, deleted)
+    if not show_hidden:
+        # Get status IDs for hidden statuses
+        hidden_statuses = db.query(Status).filter(
+            Status.value.in_(['discarted', 'solved', 'closed', 'deleted'])
+        ).all()
+        hidden_status_ids = [s.id for s in hidden_statuses]
+        if hidden_status_ids:
+            query = query.filter(~Ticket.status_id.in_(hidden_status_ids))
     if crit_id:
         query = query.filter(Ticket.crit_id == crit_id)
     if tool_id:
@@ -608,7 +860,87 @@ async def get_tickets(
     if date_to:
         query = query.filter(Ticket.creation_date <= date_to)
     
+    # Apply search filter with proper joins
+    if search and search.strip():
+        search_term = f"%{search.strip().lower()}%"
+        
+        # First, save all the filters we've already applied
+        # Create a subquery to find matching ticket IDs with search
+        # Label the ID column explicitly
+        search_query = db.query(Ticket.id.label('ticket_id'))
+        
+        # Apply all the same filters to the search subquery
+        if status_id:
+            search_query = search_query.filter(Ticket.status_id == status_id)
+        if type:
+            search_query = search_query.filter(Ticket.type == type)
+        
+        # Apply hidden status filter to search subquery too
+        if not show_hidden:
+            hidden_statuses = db.query(Status).filter(
+                Status.value.in_(['discarted', 'solved', 'closed', 'deleted'])
+            ).all()
+            hidden_status_ids = [s.id for s in hidden_statuses]
+            if hidden_status_ids:
+                search_query = search_query.filter(~Ticket.status_id.in_(hidden_status_ids))
+        
+        if crit_id:
+            search_query = search_query.filter(Ticket.crit_id == crit_id)
+        if tool_id:
+            search_query = search_query.filter(Ticket.tool_id == tool_id)
+        if center_id:
+            search_query = search_query.filter(Ticket.center_id == center_id)
+        if date_from:
+            search_query = search_query.filter(Ticket.creation_date >= date_from)
+        if date_to:
+            search_query = search_query.filter(Ticket.creation_date <= date_to)
+        
+        # Join tables needed for search
+        search_query = search_query.join(User, Ticket.creator == User.id)
+        search_query = search_query.join(Tool, Ticket.tool_id == Tool.id)
+        
+        # Build search conditions
+        search_conditions = [
+            func.lower(Ticket.title).like(search_term),
+            func.lower(Ticket.description).like(search_term),
+            func.lower(Tool.desc).like(search_term),
+            func.lower(User.username).like(search_term),
+            func.lower(Ticket.id).like(search_term),  # Search in ticket ID
+        ]
+        
+        # Handle notifier search (only match if notifier is not NULL AND matches)
+        notifier_match = and_(
+            Ticket.notifier.isnot(None),
+            func.lower(Ticket.notifier).like(search_term)
+        )
+        search_conditions.append(notifier_match)
+        
+        # Handle ticket_num search (only match if ticket_num is not NULL AND matches)
+        ticket_num_match = and_(
+            Ticket.ticket_num.isnot(None),
+            func.lower(Ticket.ticket_num).like(search_term)
+        )
+        search_conditions.append(ticket_num_match)
+        
+        # Handle people array search for SQLite
+        # Convert JSON array to text and search in it
+        people_search = func.lower(func.cast(Ticket.people, String)).like(search_term)
+        search_conditions.append(people_search)
+        
+        # Apply search filter and get distinct ticket IDs
+        matching_ticket_ids = search_query.filter(or_(*search_conditions)).distinct().subquery()
+        
+        # Filter main query by matching ticket IDs
+        # Use the labeled column name
+        query = query.filter(Ticket.id.in_(select(matching_ticket_ids.c.ticket_id)))
+    
     # Apply sorting
+    # Track which tables we've already joined for search
+    joined_tables = set()
+    if search and search.strip():
+        joined_tables.add('User')
+        joined_tables.add('Tool')
+    
     if sort_by:
         if sort_by == 'creation_date':
             if sort_order == 'desc':
@@ -626,18 +958,38 @@ async def get_tickets(
             else:
                 query = query.order_by(Ticket.ticket_num.asc())
         elif sort_by == 'status':
+            # Only join if not already joined
+            if 'Status' not in joined_tables:
+                query = query.join(Status)
+                joined_tables.add('Status')
             if sort_order == 'desc':
-                query = query.join(Status).order_by(Status.id.desc())
+                query = query.order_by(Status.id.desc())
             else:
-                query = query.join(Status).order_by(Status.id.asc())
+                query = query.order_by(Status.id.asc())
         elif sort_by == 'priority':
+            # Only join if not already joined
+            if 'Crit' not in joined_tables:
+                query = query.join(Crit)
+                joined_tables.add('Crit')
             if sort_order == 'desc':
-                query = query.join(Crit).order_by(Crit.id.desc())
+                query = query.order_by(Crit.id.desc())
             else:
-                query = query.join(Crit).order_by(Crit.id.asc())
+                query = query.order_by(Crit.id.asc())
     
     total = query.count()
     tickets = query.offset(skip).limit(limit).all()
+    
+    # Get all ticket IDs for batch comment count query
+    ticket_ids = [ticket.id for ticket in tickets]
+    
+    # Batch query comment counts for all tickets
+    comment_counts = {}
+    if ticket_ids:
+        comment_count_query = db.query(
+            Comment.ticket_id,
+            func.count(Comment.id).label('count')
+        ).filter(Comment.ticket_id.in_(ticket_ids)).group_by(Comment.ticket_id).all()
+        comment_counts = {ticket_id: count for ticket_id, count in comment_count_query}
     
     # Convert SQLAlchemy objects to dictionaries for Pydantic
     ticket_dicts = []
@@ -664,6 +1016,7 @@ async def get_tickets(
             "pathway": ticket.pathway,
             "supports": ticket.supports,
             "attached": ticket.attached,
+            "comments_count": comment_counts.get(ticket.id, 0),
             "status": {
                 "id": ticket.status.id,
                 "value": ticket.status.value,
@@ -711,6 +1064,9 @@ async def get_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
     
+    # Get comment count for this ticket
+    comments_count = db.query(func.count(Comment.id)).filter(Comment.ticket_id == ticket_id).scalar() or 0
+    
     # Convert SQLAlchemy object to dictionary for Pydantic
     ticket_dict = {
         "id": ticket.id,
@@ -734,6 +1090,7 @@ async def get_ticket(
         "pathway": ticket.pathway,
         "supports": ticket.supports,
         "attached": ticket.attached,
+        "comments_count": comments_count,
         "status": {
             "id": ticket.status.id,
             "value": ticket.status.value,
@@ -771,7 +1128,7 @@ async def update_ticket(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    check_permission(current_user, 1)  # Only level 1 can modify tickets
+    check_permission(current_user, 2)  # Level 1 (admin) or 2 (editor) can modify tickets
     
     db_ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not db_ticket:
@@ -872,7 +1229,7 @@ async def delete_ticket(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    check_permission(current_user, 1)  # Only level 1 can delete tickets
+    check_permission(current_user, 1)  # Only level 1 (admin) can delete tickets
     
     db_ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not db_ticket:
@@ -1038,6 +1395,96 @@ def get_change_description(field_name: str, new_value: str, db: Session) -> str:
     # Fallback
     return f"{field_desc} s'ha canviat per {new_value}"
 
+# Comment endpoints
+@app.post("/tickets/{ticket_id}/comments", response_model=CommentModel)
+async def create_comment(
+    ticket_id: str,
+    comment: CommentCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new comment on a ticket"""
+    check_permission(current_user, 2)  # Level 2+ can post comments
+    
+    # Verify ticket exists
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    # Ensure ticket_id matches
+    if comment.ticket_id != ticket_id:
+        raise HTTPException(status_code=400, detail="Ticket ID mismatch")
+    
+    # Create comment
+    db_comment = Comment(
+        ticket_id=ticket_id,
+        user_id=current_user.id,
+        content=comment.content,
+        created_at=datetime.utcnow()
+    )
+    db.add(db_comment)
+    db.commit()
+    db.refresh(db_comment)
+    
+    # Return comment with user relationship loaded
+    db.refresh(db_comment)
+    # Manually load the user relationship
+    comment_dict = {
+        "id": db_comment.id,
+        "ticket_id": db_comment.ticket_id,
+        "user_id": db_comment.user_id,
+        "content": db_comment.content,
+        "created_at": db_comment.created_at.isoformat() if db_comment.created_at else None,
+        "user": {
+            "id": db_comment.user.id,
+            "username": db_comment.user.username,
+            "email": db_comment.user.email,
+            "name": db_comment.user.name,
+            "surnames": db_comment.user.surnames,
+            "permission_level": db_comment.user.permission_level,
+            "is_active": db_comment.user.is_active
+        }
+    }
+    return comment_dict
+
+@app.get("/tickets/{ticket_id}/comments", response_model=CommentListResponse)
+async def get_ticket_comments(
+    ticket_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get all comments for a ticket, ordered by newest first"""
+    # Verify ticket exists
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    # Get comments ordered by newest first (descending)
+    comments = db.query(Comment).filter(Comment.ticket_id == ticket_id).order_by(Comment.created_at.desc()).all()
+    
+    # Convert to dictionaries with user information
+    comment_dicts = []
+    for comment in comments:
+        comment_dict = {
+            "id": comment.id,
+            "ticket_id": comment.ticket_id,
+            "user_id": comment.user_id,
+            "content": comment.content,
+            "created_at": comment.created_at.isoformat() if comment.created_at else None,
+            "user": {
+                "id": comment.user.id,
+                "username": comment.user.username,
+                "email": comment.user.email,
+                "name": comment.user.name,
+                "surnames": comment.user.surnames,
+                "permission_level": comment.user.permission_level,
+                "is_active": comment.user.is_active
+            }
+        }
+        comment_dicts.append(comment_dict)
+    
+    return CommentListResponse(comments=comment_dicts, total=len(comment_dicts))
+
 # Reference data endpoints
 @app.get("/status/", response_model=List[StatusModel])
 async def get_statuses(db: Session = Depends(get_db)):
@@ -1107,6 +1554,120 @@ async def initialize_reference_data(db: Session = Depends(get_db)):
     
     db.commit()
     return {"message": "Reference data initialized successfully"}
+
+# Dashboard statistics endpoint
+@app.get("/dashboard/statistics")
+async def get_dashboard_statistics(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get dashboard statistics including ticket counts, distributions, and trends"""
+    from datetime import date, timedelta
+    
+    # Total tickets (excluding deleted)
+    total_tickets = db.query(Ticket).filter(
+        Ticket.delete_date.is_(None)
+    ).count()
+    
+    # Tickets by type
+    tickets_by_type = db.query(
+        Ticket.type,
+        func.count(Ticket.id).label('count')
+    ).filter(
+        Ticket.delete_date.is_(None)
+    ).group_by(Ticket.type).all()
+    type_distribution = {t[0]: t[1] for t in tickets_by_type}
+    
+    # Tickets by criticality
+    tickets_by_crit = db.query(
+        Crit.desc,
+        func.count(Ticket.id).label('count')
+    ).join(
+        Ticket, Ticket.crit_id == Crit.id
+    ).filter(
+        Ticket.delete_date.is_(None)
+    ).group_by(Crit.id, Crit.desc).all()
+    crit_distribution = {c[0]: c[1] for c in tickets_by_crit}
+    
+    # Tickets by status
+    tickets_by_status = db.query(
+        Status.desc,
+        func.count(Ticket.id).label('count')
+    ).join(
+        Ticket, Ticket.status_id == Status.id
+    ).filter(
+        Ticket.delete_date.is_(None)
+    ).group_by(Status.id, Status.desc).all()
+    status_distribution = {s[0]: s[1] for s in tickets_by_status}
+    
+    # Tickets by center
+    tickets_by_center = db.query(
+        Center.desc,
+        func.count(Ticket.id).label('count')
+    ).join(
+        Ticket, Ticket.center_id == Center.id
+    ).filter(
+        Ticket.delete_date.is_(None)
+    ).group_by(Center.id, Center.desc).all()
+    center_distribution = {c[0]: c[1] for c in tickets_by_center}
+    
+    # Active users count
+    active_users = db.query(User).filter(User.is_active == True).count()
+    total_users = db.query(User).count()
+    
+    # Tickets created in last 30 days (for trend)
+    thirty_days_ago = date.today() - timedelta(days=30)
+    recent_tickets = db.query(
+        func.date(Ticket.creation_date).label('date'),
+        func.count(Ticket.id).label('count')
+    ).filter(
+        Ticket.creation_date >= thirty_days_ago,
+        Ticket.delete_date.is_(None)
+    ).group_by(func.date(Ticket.creation_date)).order_by(
+        func.date(Ticket.creation_date)
+    ).all()
+    
+    # Format recent tickets for chart
+    tickets_trend = [
+        {"date": str(t[0]), "count": t[1]}
+        for t in recent_tickets
+    ]
+    
+    # Open tickets (not solved, closed, or deleted)
+    open_statuses = db.query(Status).filter(
+        ~Status.value.in_(['solved', 'closed', 'deleted', 'discarted'])
+    ).all()
+    open_status_ids = [s.id for s in open_statuses]
+    open_tickets = db.query(Ticket).filter(
+        Ticket.status_id.in_(open_status_ids),
+        Ticket.delete_date.is_(None)
+    ).count()
+    
+    # Tickets by tool
+    tickets_by_tool = db.query(
+        Tool.desc,
+        func.count(Ticket.id).label('count')
+    ).join(
+        Ticket, Ticket.tool_id == Tool.id
+    ).filter(
+        Ticket.delete_date.is_(None)
+    ).group_by(Tool.id, Tool.desc).order_by(
+        func.count(Ticket.id).desc()
+    ).limit(10).all()
+    tool_distribution = {t[0]: t[1] for t in tickets_by_tool}
+    
+    return {
+        "total_tickets": total_tickets,
+        "open_tickets": open_tickets,
+        "tickets_by_type": type_distribution,
+        "tickets_by_criticality": crit_distribution,
+        "tickets_by_status": status_distribution,
+        "tickets_by_center": center_distribution,
+        "tickets_by_tool": tool_distribution,
+        "active_users": active_users,
+        "total_users": total_users,
+        "tickets_trend": tickets_trend
+    }
 
 # File migration endpoint
 @app.post("/migrate-files")
