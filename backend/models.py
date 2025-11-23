@@ -17,7 +17,7 @@ class UserBase(BaseModel):
 class UserCreate(BaseModel):
     username: str
     email: EmailStr
-    permission_level: Optional[int] = 3
+    permission_level: Optional[int] = 4  # Default to level 4 (Viewer)
     name: Optional[str] = None
     surnames: Optional[str] = None
     phone: Optional[str] = None

@@ -124,7 +124,7 @@ const TicketForm: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, user]);
 
   // Refresh user data and load reference data on mount
   useEffect(() => {
