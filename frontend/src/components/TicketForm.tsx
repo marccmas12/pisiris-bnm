@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { TicketCreate, TicketUpdate, Status, Crit, Center, Tool, FileAttachment } from '../types';
-import { ticketsAPI, referenceAPI, modificationsAPI } from '../services/api';
+import { TicketCreate, TicketUpdate, Status, Crit, Center, Tool, FileAttachment, User } from '../types';
+import { ticketsAPI, referenceAPI, modificationsAPI, usersAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import { Paperclip, X, Download, Trash2 } from 'lucide-react';
+import { Paperclip, X, Download, Trash2, Search } from 'lucide-react';
+import Toggle from './Toggle';
+import StarRating from './StarRating';
+import { getValidNextStatuses } from '../utils/statusTransitions';
 import './TicketForm.css';
 
 const TicketForm: React.FC = () => {
@@ -18,13 +21,13 @@ const TicketForm: React.FC = () => {
     title: '',
     description: '',
     url: '',
-    status_id: 1,
+    status_id: 1, // Default to "Created" status
     crit_id: 1,
     center_id: undefined,
     tool_id: 1, // Now required, default to first tool
-    notifier: '',
-    people: [''],
-    pathway: 'web', // Default pathway
+    notifier: undefined,
+    people: undefined,
+    pathway: 'web', // Always web for this form
   });
 
   const [loading, setLoading] = useState(false);
@@ -33,31 +36,48 @@ const TicketForm: React.FC = () => {
   const [crits, setCrits] = useState<Crit[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [existingAttachments, setExistingAttachments] = useState<FileAttachment[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [showModificationModal, setShowModificationModal] = useState(false);
   const [modificationReason, setModificationReason] = useState('');
   const [pendingSubmitData, setPendingSubmitData] = useState<TicketUpdate | null>(null);
+  
+  // Notification flow state
+  const [isNotified, setIsNotified] = useState(false);
+  const [isNotifiedByMe, setIsNotifiedByMe] = useState(false);
+  const [selectedNotifierUserId, setSelectedNotifierUserId] = useState<number | undefined>(undefined);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   const loadReferenceData = useCallback(async () => {
     console.log('🔄 Loading reference data...');
     try {
-      const [statusesData, critsData, centersData, toolsData] = await Promise.all([
+      const [statusesData, critsData, centersData, toolsData, usersData] = await Promise.all([
         referenceAPI.getStatuses(),
         referenceAPI.getCrits(),
         referenceAPI.getCenters(),
         referenceAPI.getTools(),
+        usersAPI.getUsersList(),
       ]);
       setStatuses(statusesData);
       setCrits(critsData);
       setCenters(centersData);
       setTools(toolsData);
+      setUsers(usersData);
       
       // Set default tool_id to first available tool
       if (toolsData.length > 0 && !isEditing) {
         setFormData(prev => ({ ...prev, tool_id: toolsData[0].id }));
       }
+      
+      // Find "created" status ID (default to 1)
+      const createdStatus = statusesData.find(s => s.value === 'created');
+      if (createdStatus && !isEditing) {
+        setFormData(prev => ({ ...prev, status_id: createdStatus.id }));
+      }
+      
       console.log('✅ Reference data loaded successfully');
     } catch (err) {
       console.error('❌ Error loading reference data:', err);
@@ -81,10 +101,21 @@ const TicketForm: React.FC = () => {
         crit_id: ticket.crit_id,
         center_id: ticket.center_id,
         tool_id: ticket.tool_id,
-        notifier: ticket.notifier || '',
+        notifier: ticket.notifier,
         people: ticket.people,
         pathway: ticket.pathway,
       });
+      
+      // Set notification state for editing
+      if (ticket.notifier) {
+        setIsNotified(true);
+        if (user && ticket.notifier === user.id) {
+          setIsNotifiedByMe(true);
+        } else {
+          setIsNotifiedByMe(false);
+          setSelectedNotifierUserId(ticket.notifier);
+        }
+      }
       setExistingAttachments(ticket.attached || []);
       console.log('✅ Ticket data loaded successfully');
     } catch (err: any) {
@@ -135,6 +166,21 @@ const TicketForm: React.FC = () => {
     }
   }, [user?.default_center_id, isEditing]);
 
+  // Close user dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showUserDropdown && !target.closest('#notifier_user') && !target.closest('[style*="position: absolute"]')) {
+        setShowUserDropdown(false);
+      }
+    };
+    
+    if (showUserDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showUserDropdown]);
+
   const handleInputChange = (field: keyof TicketCreate, value: string | number | string[]) => {
     if (field === 'center_id' && value === 0) {
       setFormData(prev => ({ ...prev, [field]: undefined }));
@@ -144,19 +190,24 @@ const TicketForm: React.FC = () => {
   };
 
   const handlePeopleChange = (index: number, value: string) => {
-    const newPeople = [...formData.people];
+    const currentPeople = formData.people || [];
+    const newPeople = [...currentPeople];
     newPeople[index] = value;
     setFormData(prev => ({ ...prev, people: newPeople }));
   };
 
   const addPerson = () => {
-    setFormData(prev => ({ ...prev, people: [...prev.people, ''] }));
+    const currentPeople = formData.people || [];
+    setFormData(prev => ({ ...prev, people: [...currentPeople, ''] }));
   };
 
   const removePerson = (index: number) => {
-    if (formData.people.length > 1) {
-      const newPeople = formData.people.filter((_, i) => i !== index);
-      setFormData(prev => ({ ...prev, people: newPeople }));
+    const currentPeople = formData.people || [];
+    if (currentPeople.length > 1) {
+      const newPeople = currentPeople.filter((_, i) => i !== index);
+      setFormData(prev => ({ ...prev, people: newPeople.length > 0 ? newPeople : undefined }));
+    } else {
+      setFormData(prev => ({ ...prev, people: undefined }));
     }
   };
 
@@ -248,22 +299,85 @@ const TicketForm: React.FC = () => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // Handle status change to "notified" - automatically set notifier toggle
+  useEffect(() => {
+    if (isEditing && statuses.length > 0) {
+      const currentStatus = statuses.find(s => s.id === formData.status_id);
+      if (currentStatus && currentStatus.value === 'notified') {
+        // If status is "notified", automatically set isNotified to true
+        if (!isNotified) {
+          setIsNotified(true);
+          // If no notifier is set, default to current user
+          if (!formData.notifier && user) {
+            setIsNotifiedByMe(true);
+            setFormData(prev => ({ ...prev, notifier: user.id }));
+          }
+        }
+      }
+    }
+  }, [formData.status_id, statuses, isEditing]);
+
+  // Handle notification toggle changes
+  useEffect(() => {
+    const currentStatus = statuses.find(s => s.id === formData.status_id);
+    const isNotifiedStatus = currentStatus?.value === 'notified';
+    
+    if (!isNotified) {
+      // If not notified, clear notifier
+      // Only change status if we're not in editing mode with "notified" status
+      if (!isEditing || !isNotifiedStatus) {
+        setFormData(prev => ({ ...prev, notifier: undefined }));
+        const createdStatus = statuses.find(s => s.value === 'created');
+        if (createdStatus && !isEditing) {
+          setFormData(prev => ({ ...prev, status_id: createdStatus.id }));
+        }
+      } else if (isEditing && isNotifiedStatus) {
+        // If status is "notified" in edit mode, prevent unchecking
+        setIsNotified(true);
+        return;
+      }
+      setIsNotifiedByMe(false);
+      setSelectedNotifierUserId(undefined);
+    } else {
+      // If notified, set status to "notified" (only if not editing or if not already notified)
+      if (!isEditing || !isNotifiedStatus) {
+        const notifiedStatus = statuses.find(s => s.value === 'notified');
+        if (notifiedStatus) {
+          setFormData(prev => ({ ...prev, status_id: notifiedStatus.id }));
+        }
+      }
+      
+      // Set notifier based on who notified
+      if (isNotifiedByMe && user) {
+        setFormData(prev => ({ ...prev, notifier: user.id }));
+        setSelectedNotifierUserId(undefined);
+      } else if (!isNotifiedByMe && selectedNotifierUserId) {
+        setFormData(prev => ({ ...prev, notifier: selectedNotifierUserId }));
+      } else if (!isNotifiedByMe && !isEditing) {
+        setFormData(prev => ({ ...prev, notifier: undefined }));
+      }
+    }
+  }, [isNotified, isNotifiedByMe, selectedNotifierUserId, statuses, user, isEditing, formData.status_id]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
-    // Filter out empty people entries
-    const filteredPeople = formData.people.filter(p => p.trim() !== '');
-    if (filteredPeople.length === 0) {
-      setError('Almenys una persona ha d\'estar implicada');
+    // Validate notifier if status is "notified"
+    const currentStatus = statuses.find(s => s.id === formData.status_id);
+    if (currentStatus && currentStatus.value === 'notified' && !formData.notifier) {
+      setError('Quan l\'estat és "Notificada", cal seleccionar un notificador');
       setLoading(false);
       return;
     }
 
+    // Filter out empty people entries (people is now optional)
+    const filteredPeople = formData.people?.filter(p => p && p.trim() !== '') || [];
+
     const submitData = {
       ...formData,
-      people: filteredPeople
+      people: filteredPeople.length > 0 ? filteredPeople : undefined
     };
 
     try {
@@ -350,6 +464,34 @@ const TicketForm: React.FC = () => {
     return type === 'incidence' ? 'Incidència' : 'Suggeriment';
   };
 
+  // Helper function to map crit_id to star rating (1-4)
+  const getStarRatingFromCritId = (critId: number): number => {
+    if (!crits || crits.length === 0) return 1;
+    const crit = crits.find(c => c.id === critId);
+    if (!crit) return 1;
+    
+    switch (crit.value.toLowerCase()) {
+      case 'low':
+        return 1;
+      case 'mid':
+        return 2;
+      case 'high':
+        return 3;
+      case 'critical':
+        return 4;
+      default:
+        return 1;
+    }
+  };
+
+  // Helper function to get crit_id from star rating
+  const getCritIdFromStarRating = (stars: number): number | undefined => {
+    if (!crits || crits.length === 0) return undefined;
+    const critValue = stars === 1 ? 'low' : stars === 2 ? 'mid' : stars === 3 ? 'high' : 'critical';
+    const crit = crits.find(c => c.value.toLowerCase() === critValue);
+    return crit?.id;
+  };
+
   return (
     <div className="ticket-form-container">
       <div className="form-header">
@@ -408,6 +550,17 @@ const TicketForm: React.FC = () => {
               Número de ticket d'una plataforma externa (JIRA, ServiceNow, etc.)
             </small>
           </div>
+          <div className="form-group">
+            <label htmlFor="url">URL (Opcional)</label>
+            <input
+              type="url"
+              id="url"
+              value={formData.url}
+              onChange={(e) => handleInputChange('url', e.target.value)}
+              disabled={loading || uploadingFiles}
+              placeholder="https://example.com"
+            />
+          </div>
         </div>
 
         <div className="form-group">
@@ -436,52 +589,19 @@ const TicketForm: React.FC = () => {
           />
         </div>
 
+        {/* Priority, Center, and Tool - moved under description */}
         <div className="form-group">
-          <label htmlFor="url">URL (Opcional)</label>
-          <input
-            type="url"
-            id="url"
-            value={formData.url}
-            onChange={(e) => handleInputChange('url', e.target.value)}
+          <StarRating
+            value={getStarRatingFromCritId(formData.crit_id)}
+            onChange={(value) => {
+              const critId = getCritIdFromStarRating(value);
+              if (critId) {
+                handleInputChange('crit_id', critId);
+              }
+            }}
             disabled={loading || uploadingFiles}
-            placeholder="https://example.com"
+            label="Prioritat *"
           />
-        </div>
-
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="status_id">Estat *</label>
-            <select
-              id="status_id"
-              value={formData.status_id}
-              onChange={(e) => handleInputChange('status_id', parseInt(e.target.value))}
-              required
-              disabled={loading || uploadingFiles}
-            >
-              {statuses.map(status => (
-                <option key={status.id} value={status.id}>
-                  {status.desc}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="crit_id">Prioritat *</label>
-            <select
-              id="crit_id"
-              value={formData.crit_id}
-              onChange={(e) => handleInputChange('crit_id', parseInt(e.target.value))}
-              required
-              disabled={loading || uploadingFiles}
-            >
-              {crits.map(crit => (
-                <option key={crit.id} value={crit.id}>
-                  {crit.desc}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
 
         <div className="form-row">
@@ -520,75 +640,232 @@ const TicketForm: React.FC = () => {
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="notifier">Notificador (Opcional)</label>
-          <input
-            type="text"
-            id="notifier"
-            value={formData.notifier}
-            onChange={(e) => handleInputChange('notifier', e.target.value)}
-            disabled={loading || uploadingFiles}
-            placeholder="Nom del notificador"
-          />
-        </div>
-
-        <div className="form-group">
-          <label>Persones Implicades *</label>
-          {formData.people.map((person, index) => (
-            <div key={index} className="people-input-row">
-              <input
-                type="text"
-                value={person}
-                onChange={(e) => handlePeopleChange(index, e.target.value)}
-                placeholder={`Persona ${index + 1}`}
+        {/* Status - only shown when editing */}
+        {isEditing && (
+          <div className="form-row">
+            <div className="form-group">
+              <label htmlFor="status_id">Estat *</label>
+              <select
+                id="status_id"
+                value={formData.status_id}
+                onChange={(e) => handleInputChange('status_id', parseInt(e.target.value))}
+                required
                 disabled={loading || uploadingFiles}
-                required={index === 0}
-              />
-              {formData.people.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removePerson(index)}
-                  className="remove-person-btn"
-                  disabled={loading || uploadingFiles}
-                >
-                  Eliminar
-                </button>
-              )}
+              >
+                {(() => {
+                  // Get current status value
+                  const currentStatus = statuses.find(s => s.id === formData.status_id);
+                  const currentStatusValue = currentStatus?.value || '';
+                  
+                  // Get valid next statuses
+                  const validNextStatuses = getValidNextStatuses(currentStatusValue);
+                  
+                  // Filter statuses to only show valid transitions and current status
+                  const availableStatuses = statuses.filter(status => 
+                    status.id === formData.status_id || // Always include current status
+                    validNextStatuses.includes(status.value)
+                  );
+                  
+                  return availableStatuses.map(status => (
+                    <option key={status.id} value={status.id}>
+                      {status.desc}
+                    </option>
+                  ));
+                })()}
+              </select>
             </div>
-          ))}
-          <button
-            type="button"
-            onClick={addPerson}
-            className="add-person-btn"
-            disabled={loading || uploadingFiles}
-          >
-            Afegir Persona
-          </button>
-        </div>
+          </div>
+        )}
 
-        <div className="form-group">
-          <label htmlFor="pathway">Via de Creació *</label>
-          <select
-            id="pathway"
-            value={formData.pathway}
-            onChange={(e) => handleInputChange('pathway', e.target.value)}
-            required
-            disabled={loading || uploadingFiles}
-          >
-            <option value="web">Web</option>
-            <option value="mobile">Mòbil</option>
-            <option value="email">Email</option>
-            <option value="phone">Telèfon</option>
-            <option value="in_person">En persona</option>
-          </select>
+        {/* Notification and People Section */}
+        <div className="form-section">
+          <h3 className="form-section-title">Notificació i Persones Involucrades</h3>
+          
+          <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+            <Toggle
+              id="is_notified"
+              checked={isNotified}
+              onChange={(checked) => {
+                // If status is "notified" and user tries to uncheck, prevent it
+                const currentStatus = statuses.find(s => s.id === formData.status_id);
+                if (!checked && currentStatus?.value === 'notified' && isEditing) {
+                  setError('No pots desmarcar la notificació quan l\'estat és "Notificada". Canvia l\'estat primer.');
+                  return;
+                }
+                setIsNotified(checked);
+              }}
+              label="S'ha notificat a l'Àtom?"
+              disabled={loading || uploadingFiles}
+            />
+            
+            {isNotified && (
+              <div style={{ marginLeft: '24px', marginTop: '8px' }}>
+                <Toggle
+                  id="is_notified_by_me"
+                  checked={isNotifiedByMe}
+                  onChange={setIsNotifiedByMe}
+                  label="Ho has notificat tu?"
+                  disabled={loading || uploadingFiles}
+                />
+                
+                {!isNotifiedByMe && (
+                  <div style={{ position: 'relative', marginTop: '12px' }}>
+                    <label htmlFor="notifier_user" style={{ display: 'block', marginBottom: '8px' }}>
+                      Selecciona qui ha notificat: {isEditing && statuses.find(s => s.id === formData.status_id)?.value === 'notified' ? '*' : ''}
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        id="notifier_user"
+                        value={userSearchQuery}
+                        onChange={(e) => {
+                          setUserSearchQuery(e.target.value);
+                          setShowUserDropdown(true);
+                        }}
+                        onFocus={() => setShowUserDropdown(true)}
+                        placeholder="Cerca un usuari..."
+                        disabled={loading || uploadingFiles}
+                        style={{ width: '100%', padding: '8px', paddingRight: '32px' }}
+                      />
+                      <Search 
+                        size={16} 
+                        style={{ 
+                          position: 'absolute', 
+                          right: '8px', 
+                          top: '50%', 
+                          transform: 'translateY(-50%)',
+                          pointerEvents: 'none',
+                          color: '#666'
+                        }} 
+                      />
+                      {showUserDropdown && (
+                        <div 
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            right: 0,
+                            backgroundColor: 'white',
+                            border: '1px solid #ddd',
+                            borderRadius: '4px',
+                            maxHeight: '200px',
+                            overflowY: 'auto',
+                            zIndex: 1000,
+                            marginTop: '4px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                          }}
+                        >
+                          {users
+                            .filter(u => 
+                              !userSearchQuery || 
+                              u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+                              (u.name && u.name.toLowerCase().includes(userSearchQuery.toLowerCase())) ||
+                              (u.surnames && u.surnames.toLowerCase().includes(userSearchQuery.toLowerCase()))
+                            )
+                            .map(u => (
+                              <div
+                                key={u.id}
+                                onClick={() => {
+                                  setSelectedNotifierUserId(u.id);
+                                  setUserSearchQuery(u.username + (u.name ? ` (${u.name} ${u.surnames || ''})` : ''));
+                                  setShowUserDropdown(false);
+                                }}
+                                style={{
+                                  padding: '8px 12px',
+                                  cursor: 'pointer',
+                                  backgroundColor: selectedNotifierUserId === u.id ? '#e3f2fd' : 'white',
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (selectedNotifierUserId !== u.id) {
+                                    e.currentTarget.style.backgroundColor = '#f5f5f5';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (selectedNotifierUserId !== u.id) {
+                                    e.currentTarget.style.backgroundColor = 'white';
+                                  }
+                                }}
+                              >
+                                {u.username}{u.name ? ` (${u.name} ${u.surnames || ''})` : ''}
+                              </div>
+                            ))}
+                          {users.filter(u => 
+                            !userSearchQuery || 
+                            u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+                            (u.name && u.name.toLowerCase().includes(userSearchQuery.toLowerCase())) ||
+                            (u.surnames && u.surnames.toLowerCase().includes(userSearchQuery.toLowerCase()))
+                          ).length === 0 && (
+                            <div style={{ padding: '8px 12px', color: '#666' }}>
+                              No s'han trobat usuaris
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Persones Implicades (Opcional)</label>
+            {(formData.people && formData.people.length > 0) ? (
+              formData.people.map((person, index) => (
+                <div key={index} className="people-input-row">
+                  <input
+                    type="text"
+                    value={person}
+                    onChange={(e) => handlePeopleChange(index, e.target.value)}
+                    placeholder={`Persona ${index + 1}`}
+                    disabled={loading || uploadingFiles}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePerson(index)}
+                    className="remove-person-btn"
+                    disabled={loading || uploadingFiles}
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="people-input-row">
+                <input
+                  type="text"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setFormData(prev => ({ 
+                        ...prev, 
+                        people: [e.target.value] 
+                      }));
+                    }
+                  }}
+                  placeholder="Persona 1"
+                  disabled={loading || uploadingFiles}
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={addPerson}
+              className="add-person-btn"
+              disabled={loading || uploadingFiles}
+            >
+              Afegir Persona
+            </button>
+          </div>
         </div>
 
         {/* File Attachments Section */}
-        {/* Show for both new and existing tickets */}
-        <>
+        <div className="form-section">
+          <h3 className="form-section-title">Adjunts</h3>
+          
           {/* Existing Attachments - Only show when editing */}
           {isEditing && (
-            <div className="form-group">
+            <div className="form-group" style={{ marginBottom: '1.5rem' }}>
               <label>Adjunts Existents</label>
               {existingAttachments.length > 0 ? (
                 <div className="existing-attachments">
@@ -705,7 +982,7 @@ const TicketForm: React.FC = () => {
               )}
             </div>
           )}
-        </>
+        </div>
 
         <div className="form-actions">
           <button

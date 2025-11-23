@@ -25,9 +25,15 @@ class User(Base):
     permission_level = Column(Integer, default=3)  # 1=full, 2=create/view, 3=view only
     is_active = Column(Boolean, default=True)
     default_center_id = Column(Integer, ForeignKey("center.id"), nullable=True)  # Default center for new tickets
+    phone = Column(String, nullable=True)  # User's phone number
+    worktime = Column(Text, nullable=True)  # Horari laboral - user's work hours
+    role = Column(String, nullable=True)  # Role: Administratiu, Metge de familia, Infermeria
+    must_complete_profile = Column(Boolean, default=True)  # Flag for first-time profile completion
+    must_change_password = Column(Boolean, default=True)  # Flag for first-time password change
     
     # Relationships
-    tickets_created = relationship("Ticket", back_populates="created_by_user")
+    tickets_created = relationship("Ticket", back_populates="created_by_user", foreign_keys="[Ticket.creator]")
+    tickets_notified = relationship("Ticket", back_populates="notifier_user", foreign_keys="[Ticket.notifier]")
     modifications = relationship("Modification", back_populates="user")
     comments = relationship("Comment", back_populates="user")
     default_center = relationship("Center")
@@ -48,8 +54,8 @@ class Ticket(Base):
     resolution_date = Column(Date, nullable=True)  # Auto-set when status=solved
     delete_date = Column(Date, nullable=True)  # Auto-set when status=deleted
     modify_reason = Column(Text, nullable=True)  # Linked to status change
-    notifier = Column(String, nullable=True)  # New field
-    people = Column(JSON, nullable=False)  # Array of strings, required
+    notifier = Column(Integer, ForeignKey("users.id"), nullable=True)  # User ID who notified
+    people = Column(JSON, nullable=True)  # Array of strings, optional
     creator = Column(Integer, ForeignKey("users.id"), nullable=False)
     center_id = Column(Integer, ForeignKey("center.id"), nullable=True)
     tool_id = Column(Integer, ForeignKey("tool.id"), nullable=False)  # Now required
@@ -58,7 +64,8 @@ class Ticket(Base):
     attached = Column(JSON, nullable=True)  # Array of file paths
     
     # Relationships
-    created_by_user = relationship("User", back_populates="tickets_created")
+    created_by_user = relationship("User", back_populates="tickets_created", foreign_keys=[creator])
+    notifier_user = relationship("User", back_populates="tickets_notified", foreign_keys=[notifier])
     status = relationship("Status")
     crit = relationship("Crit")
     center = relationship("Center")

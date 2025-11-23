@@ -8,6 +8,7 @@ import TicketForm from './components/TicketForm';
 import TicketDetail from './components/TicketDetail';
 import UserManagement from './components/UserManagement';
 import UserProfile from './components/UserProfile';
+import MyProfile from './components/MyProfile';
 import Navigation from './components/Navigation';
 import Footer from './components/Footer';
 import { User } from './types';
@@ -15,13 +16,18 @@ import './App.css';
 
 // Protected Route component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
 
   if (loading) {
     return <div className="loading">Loading...</div>;
   }
 
   if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Check if user needs to complete setup (change password or complete profile)
+  if (user && (user.must_change_password || user.must_complete_profile)) {
     return <Navigate to="/login" replace />;
   }
 
@@ -44,9 +50,12 @@ const AppContent: React.FC = () => {
     setCurrentUser(updatedUser);
   };
 
+  // Check if user needs to complete setup
+  const needsSetup = currentUser && (currentUser.must_change_password || currentUser.must_complete_profile);
+
   return (
     <div className="app">
-      {currentUser && (
+      {currentUser && !needsSetup && (
         <Navigation 
           user={currentUser} 
           onLogout={logout} 
@@ -117,6 +126,14 @@ const AppContent: React.FC = () => {
             element={
               <ProtectedRoute>
                 <UserProfile />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <MyProfile />
               </ProtectedRoute>
             }
           />

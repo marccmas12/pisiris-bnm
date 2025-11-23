@@ -26,7 +26,10 @@ const UserForm: React.FC<UserFormProps> = ({
     confirmPassword: '',
     permission_level: 4,
     default_center_id: '',
-    is_active: true
+    is_active: true,
+    phone: '',
+    worktime: '',
+    role: ''
   });
   const [centers, setCenters] = useState<Center[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,7 +48,10 @@ const UserForm: React.FC<UserFormProps> = ({
           confirmPassword: '',
           permission_level: user.permission_level,
           default_center_id: user.default_center_id?.toString() || '',
-          is_active: user.is_active
+          is_active: user.is_active,
+          phone: user.phone || '',
+          worktime: user.worktime || '',
+          role: user.role || ''
         });
       } else {
         setFormData({
@@ -57,7 +63,10 @@ const UserForm: React.FC<UserFormProps> = ({
           confirmPassword: '',
           permission_level: 4,
           default_center_id: '',
-          is_active: true
+          is_active: true,
+          phone: '',
+          worktime: '',
+          role: ''
         });
       }
       setError('');
@@ -73,7 +82,7 @@ const UserForm: React.FC<UserFormProps> = ({
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
     
@@ -89,19 +98,6 @@ const UserForm: React.FC<UserFormProps> = ({
     setError('');
 
     try {
-      // Validation
-      if (!isEditing && (!formData.password || formData.password.length < 6)) {
-        setError('La contrasenya ha de tenir almenys 6 caràcters');
-        setLoading(false);
-        return;
-      }
-
-      if (!isEditing && formData.password !== formData.confirmPassword) {
-        setError('Les contrasenyes no coincideixen');
-        setLoading(false);
-        return;
-      }
-
       if (isEditing) {
         // Update user
         const updateData: UserUpdate = {
@@ -111,7 +107,10 @@ const UserForm: React.FC<UserFormProps> = ({
           surnames: formData.surnames || undefined,
           permission_level: formData.permission_level,
           default_center_id: formData.default_center_id ? parseInt(formData.default_center_id) : undefined,
-          is_active: formData.is_active
+          is_active: formData.is_active,
+          phone: formData.phone || undefined,
+          worktime: formData.worktime || undefined,
+          role: formData.role || undefined
         };
 
         // Only include password if provided
@@ -131,15 +130,17 @@ const UserForm: React.FC<UserFormProps> = ({
 
         await usersAPI.updateUser(user!.id, updateData);
       } else {
-        // Create user
+        // Create user - password is auto-generated from email on backend
         const createData: UserCreate = {
           username: formData.username,
           email: formData.email,
-          password: formData.password,
+          permission_level: formData.permission_level,
+          default_center_id: formData.default_center_id ? parseInt(formData.default_center_id) : undefined,
           name: formData.name || undefined,
           surnames: formData.surnames || undefined,
-          permission_level: formData.permission_level,
-          default_center_id: formData.default_center_id ? parseInt(formData.default_center_id) : undefined
+          phone: formData.phone || undefined,
+          worktime: formData.worktime || undefined,
+          role: formData.role || undefined
         };
 
         await usersAPI.createUser(createData);
@@ -224,6 +225,45 @@ const UserForm: React.FC<UserFormProps> = ({
           </div>
 
           <div className="form-group">
+            <label htmlFor="role">Rol:</label>
+            <select
+              id="role"
+              name="role"
+              value={formData.role}
+              onChange={handleInputChange}
+            >
+              <option value="">Selecciona un rol</option>
+              <option value="administratiu">Administratiu</option>
+              <option value="Metge de familia">Metge de familia</option>
+              <option value="Infermeria">Infermeria</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="phone">Telèfon (recomanat):</label>
+            <input
+              type="tel"
+              id="phone"
+              name="phone"
+              value={formData.phone}
+              onChange={handleInputChange}
+              placeholder="Número de telèfon"
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="worktime">Horari laboral (recomanat):</label>
+            <textarea
+              id="worktime"
+              name="worktime"
+              value={formData.worktime}
+              onChange={handleInputChange}
+              placeholder="Descriu l'horari de treball"
+              rows={3}
+            />
+          </div>
+
+          <div className="form-group">
             <label htmlFor="permission_level">Nivell de permisos: *</label>
             <select
               id="permission_level"
@@ -264,64 +304,56 @@ const UserForm: React.FC<UserFormProps> = ({
           </div>
 
           {isEditing && (
-            <div className="form-group">
-              <label htmlFor="is_active">
-                <input
-                  type="checkbox"
-                  id="is_active"
-                  name="is_active"
-                  checked={formData.is_active}
-                  onChange={handleInputChange}
-                />
-                Usuari actiu
-              </label>
-            </div>
+            <>
+              <div className="form-group">
+                <label htmlFor="is_active">
+                  <input
+                    type="checkbox"
+                    id="is_active"
+                    name="is_active"
+                    checked={formData.is_active}
+                    onChange={handleInputChange}
+                  />
+                  Usuari actiu
+                </label>
+              </div>
+
+              <div className="form-section">
+                <h3>Canviar contrasenya (opcional)</h3>
+                <div className="form-group">
+                  <label htmlFor="password">Nova contrasenya:</label>
+                  <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    placeholder="Deixa buit per mantenir la contrasenya actual"
+                  />
+                </div>
+
+                {formData.password && (
+                  <div className="form-group">
+                    <label htmlFor="confirmPassword">Confirmar nova contrasenya:</label>
+                    <input
+                      type="password"
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleInputChange}
+                      placeholder="Confirma la nova contrasenya"
+                    />
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
-          <div className="form-section">
-            <h3>{isEditing ? 'Canviar contrasenya (opcional)' : 'Contrasenya: *'}</h3>
-            <div className="form-group">
-              <label htmlFor="password">{isEditing ? 'Nova contrasenya:' : 'Contrasenya: *'}</label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                value={formData.password}
-                onChange={handleInputChange}
-                required={!isEditing}
-                placeholder={isEditing ? 'Deixa buit per mantenir la contrasenya actual' : 'Mínim 6 caràcters'}
-              />
-            </div>
-
-            {!isEditing && (
-              <div className="form-group">
-                <label htmlFor="confirmPassword">Confirmar contrasenya: *</label>
-                <input
-                  type="password"
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleInputChange}
-                  required
-                  placeholder="Confirma la contrasenya"
-                />
-              </div>
-            )}
-
-            {isEditing && formData.password && (
-              <div className="form-group">
-                <label htmlFor="confirmPassword">Confirmar nova contrasenya:</label>
-                <input
-                  type="password"
-                  id="confirmPassword"
-                  name="confirmPassword"
-                  value={formData.confirmPassword}
-                  onChange={handleInputChange}
-                  placeholder="Confirma la nova contrasenya"
-                />
-              </div>
-            )}
-          </div>
+          {!isEditing && (
+            <p className="info-message" style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: '#f0f9ff', border: '1px solid #0ea5e9', borderRadius: '4px', fontSize: '0.9rem' }}>
+              <strong>Nota:</strong> La contrasenya inicial es generarà automàticament a partir del correu electrònic (la part abans de @). L'usuari haurà de canviar-la al primer inici de sessió.
+            </p>
+          )}
 
           {error && <div className="error-message">{error}</div>}
 

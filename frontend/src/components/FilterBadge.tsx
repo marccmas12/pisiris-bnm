@@ -1,7 +1,7 @@
 import React from 'react';
-import { X } from 'lucide-react';
 import { FilterValues } from './FilterDialog';
 import { Status, Crit, Center, Tool } from '../types';
+import Badge from './Badge';
 import './FilterBadge.css';
 
 interface FilterBadgeProps {
@@ -52,27 +52,23 @@ const FilterBadge: React.FC<FilterBadgeProps> = ({
   }
 
   return (
-    <div className="filter-badges-container">
-      <div className="filter-badges">
-        {activeFilters.map(([key, value]) => (
-          <div key={key} className="filter-badge">
-            <span className="filter-badge-text">
-              {getFilterLabel(key as keyof FilterValues, value)}
-            </span>
-            <button
-              className="filter-badge-remove"
-              onClick={() => onRemoveFilter(key as keyof FilterValues)}
-              title="Eliminar filtre"
+      <div className="filter-badges-container">
+        <div className="filter-badges">
+          {activeFilters.map(([key, value]) => (
+            <Badge
+              key={key}
+              variant="outlined"
+              color="blue"
+              onRemove={() => onRemoveFilter(key as keyof FilterValues)}
             >
-              <X size={14} />
-            </button>
-          </div>
-        ))}
+              {getFilterLabel(key as keyof FilterValues, value)}
+            </Badge>
+          ))}
+        </div>
+        <button className="clear-filters-button" onClick={onClearAll}>
+          Netejar tots
+        </button>
       </div>
-      <button className="clear-filters-button" onClick={onClearAll}>
-        Netejar tots
-      </button>
-    </div>
   );
 };
 

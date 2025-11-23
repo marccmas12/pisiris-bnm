@@ -512,13 +512,6 @@
   background-color: #f8f9fa;
 }
 
-.status-badge {
-  padding: 0.25rem 0.5rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: white;
-}
 
 .action-buttons {
   display: flex;
@@ -575,7 +568,7 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
   min-width: 120px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 /* Smart positioning for action dropdown */
@@ -601,18 +594,74 @@
   cursor: pointer;
   font-size: 0.875rem;
   transition: background-color 0.2s;
+  color: #333;
+}
+
+.dropdown-item svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
 }
 
 .dropdown-item:hover {
   background-color: #f8f9fa;
 }
 
-.dropdown-item {
-  color: #333;
-}
 
 .dropdown-item.delete {
   color: #ef4444;
+}
+
+.dropdown-item-with-submenu {
+  position: relative;
+}
+
+.dropdown-item-with-submenu > .dropdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dropdown-item-with-submenu > .dropdown-item > span:first-of-type {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-submenu {
+  position: fixed;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1001;
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.status-submenu .dropdown-item {
+  padding: 8px 12px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-submenu .dropdown-item svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.status-submenu .dropdown-item.disabled {
+  color: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.status-submenu .dropdown-item.disabled:hover {
+  background-color: transparent;
 }
 
 .no-tickets {
@@ -684,6 +733,97 @@
   .internal-id {
     font-size: 12px;
   }
+}
+
+/* Modal styles for notifier selection */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+
+.modal-content {
+  background-color: white;
+  border-radius: 8px;
+  padding: 30px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  margin-bottom: 20px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 20px;
+}
+
+.modal-body {
+  margin-bottom: 20px;
+}
+
+.modal-body p {
+  margin: 0 0 20px 0;
+  color: #666;
+  line-height: 1.5;
+}
+
+.modal-footer {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #e9ecef;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 15px;
+  justify-content: flex-end;
+}
+
+.modal-actions .cancel-button,
+.modal-actions .submit-button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.modal-actions .cancel-button {
+  background-color: #6c757d;
+  color: white;
+}
+
+.modal-actions .cancel-button:hover {
+  background-color: #5a6268;
+}
+
+.modal-actions .submit-button {
+  background-color: #28a745;
+  color: white;
+}
+
+.modal-actions .submit-button:hover {
+  background-color: #218838;
+}
+
+.modal-actions .submit-button:disabled {
+  background-color: #6c757d;
+  cursor: not-allowed;
 }
 
 @media (max-width: 768px) {

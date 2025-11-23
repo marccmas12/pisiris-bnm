@@ -20,20 +20,29 @@ def insert_initial_data():
     """Insert initial configuration data"""
     db = SessionLocal()
     try:
-        # Insert statuses
-        statuses = [
-            {"value": "created", "desc": "Creada"},
-            {"value": "reviewed", "desc": "Revisada"},
-            {"value": "discarted", "desc": "Descartada"},
-            {"value": "resolving", "desc": "En resolució"},
-            {"value": "notified", "desc": "Notificada"},
-            {"value": "solved", "desc": "Resolta"},
-            {"value": "closed", "desc": "Tancada"},
-            {"value": "deleted", "desc": "Eliminada"}
-        ]
-        
-        for status in statuses:
-            db.execute(text("INSERT INTO status (value, desc) VALUES (:value, :desc)"), status)
+        # Insert statuses (load from config file to ensure consistency)
+        from config_manager import config_manager
+        try:
+            statuses = config_manager.get_statuses()
+            for status in statuses:
+                db.execute(text("INSERT INTO status (value, desc) VALUES (:value, :desc)"), status)
+        except Exception as e:
+            print(f"Warning: Could not load statuses from config, using fallback: {e}")
+            # Fallback to hardcoded list if config fails
+            statuses = [
+                {"value": "created", "desc": "Creada"},
+                {"value": "reviewed", "desc": "Revisada"},
+                {"value": "discarted", "desc": "Descartada"},
+                {"value": "resolving", "desc": "En resolució"},
+                {"value": "notified", "desc": "Notificada"},
+                {"value": "solved", "desc": "Resolta"},
+                {"value": "closed", "desc": "Tancada"},
+                {"value": "deleted", "desc": "Eliminada"},
+                {"value": "on_hold", "desc": "Aturada"},
+                {"value": "reopened", "desc": "Reoberta"}
+            ]
+            for status in statuses:
+                db.execute(text("INSERT INTO status (value, desc) VALUES (:value, :desc)"), status)
         
         # Insert crits
         crits = [
@@ -71,12 +80,14 @@ def insert_initial_data():
             "name": "Administrador",
             "surnames": "Sistema",
             "permission_level": 1,
-            "is_active": True
+            "is_active": True,
+            "must_complete_profile": False,
+            "must_change_password": False
         }
         
         db.execute(text("""
-            INSERT INTO users (username, email, hashed_password, name, surnames, permission_level, is_active)
-            VALUES (:username, :email, :hashed_password, :name, :surnames, :permission_level, :is_active)
+            INSERT INTO users (username, email, hashed_password, name, surnames, permission_level, is_active, must_complete_profile, must_change_password)
+            VALUES (:username, :email, :hashed_password, :name, :surnames, :permission_level, :is_active, :must_complete_profile, :must_change_password)
         """), admin_user)
         
         db.commit()

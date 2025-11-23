@@ -7,6 +7,11 @@ export interface User {
   permission_level: number;
   is_active: boolean;
   default_center_id?: number;
+  phone?: string;
+  worktime?: string;
+  role?: string;
+  must_complete_profile: boolean;
+  must_change_password: boolean;
 }
 
 export interface FileAttachment {
@@ -40,8 +45,8 @@ export interface Ticket {
   resolution_date?: string;
   delete_date?: string;
   modify_reason?: string;
-  notifier?: string;
-  people: string[];
+  notifier?: number;  // User ID who notified
+  people?: string[];  // Array of strings, optional
   creator: number;
   pathway: string;
   supports: number;
@@ -51,6 +56,7 @@ export interface Ticket {
 export interface TicketWithRelations extends Ticket {
   comments_count?: number;
   created_by_user: User;
+  notifier_user?: User;  // User object for notifier
   status: Status;
   crit: Crit;
   center?: Center;
@@ -106,8 +112,8 @@ export interface TicketCreate {
   crit_id: number;
   center_id?: number;
   tool_id: number;
-  notifier?: string;
-  people: string[];
+  notifier?: number;  // User ID who notified
+  people?: string[];  // Array of strings, optional
   pathway: string;
 }
 
@@ -121,7 +127,7 @@ export interface TicketUpdate {
   crit_id?: number;
   center_id?: number;
   tool_id?: number;
-  notifier?: string;
+  notifier?: number;  // User ID who notified
   people?: string[];
   pathway?: string;
 }
@@ -129,11 +135,13 @@ export interface TicketUpdate {
 export interface UserCreate {
   username: string;
   email: string;
-  password: string;
+  permission_level?: number;
+  default_center_id?: number;
   name?: string;
   surnames?: string;
-  permission_level: number;
-  default_center_id?: number;
+  phone?: string;
+  worktime?: string;
+  role?: string;
 }
 
 export interface UserUpdate {
@@ -145,6 +153,11 @@ export interface UserUpdate {
   default_center_id?: number;
   is_active?: boolean;
   password?: string;
+  phone?: string;
+  worktime?: string;
+  role?: string;
+  must_complete_profile?: boolean;
+  must_change_password?: boolean;
 }
 
 export interface LoginForm {
@@ -214,6 +227,19 @@ export interface UserListResponse {
 export interface UserWithTickets extends User {
   tickets: TicketWithRelations[];
   total_tickets: number;
+}
+
+export interface ProfileCompleteRequest {
+  name: string;
+  surnames: string;
+  role: string;
+  default_center_id?: number;
+  phone?: string;
+  worktime?: string;
+}
+
+export interface FirstPasswordChange {
+  new_password: string;
 }
 
 // Permission level constants (for reference)

@@ -67,12 +67,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       logout();
     };
 
+    const handleAuthIncomplete = async () => {
+      console.log('Auth incomplete event received, refreshing user...');
+      try {
+        await refreshUser();
+      } catch (error) {
+        console.error('Failed to refresh user:', error);
+      }
+    };
+
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('auth:logout', handleAuthLogout);
+    window.addEventListener('auth:incomplete', handleAuthIncomplete);
     
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('auth:logout', handleAuthLogout);
+      window.removeEventListener('auth:incomplete', handleAuthIncomplete);
     };
   }, []);
 

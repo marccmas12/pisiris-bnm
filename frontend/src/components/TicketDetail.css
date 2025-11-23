@@ -1,6 +1,7 @@
 /* Minimal custom styles for TicketDetail component */
 /* Most styling is now handled by Tailwind CSS classes */
 
+
 /* Custom scrollbar for the modal */
 .modal-content::-webkit-scrollbar {
   width: 6px;

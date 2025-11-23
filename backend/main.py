@@ -18,13 +18,52 @@ from models import (
     TicketUpdate, TicketWithRelations, ModificationCreate, Modification as ModificationModel,
     Token, Status as StatusModel, Crit as CritModel, Center as CenterModel, Tool as ToolModel,
     TicketListResponse, ModificationListResponse, GroupedModificationListResponse, UserUpdate,
-    CommentCreate, Comment as CommentModel, CommentWithUser, CommentListResponse
+    CommentCreate, Comment as CommentModel, CommentWithUser, CommentListResponse,
+    ProfileCompleteRequest, FirstPasswordChange
 )
 from auth import (
     authenticate_user, create_access_token, get_current_active_user, 
-    get_password_hash, check_permission, ACCESS_TOKEN_EXPIRE_MINUTES
+    get_current_complete_user, get_password_hash, check_permission, ACCESS_TOKEN_EXPIRE_MINUTES
 )
 from ticket_id_generator import generate_ticket_id
+
+# Status transition rules - defines valid transitions between statuses
+STATUS_TRANSITIONS = {
+    'created': ['reviewed', 'notified', 'deleted'],
+    'reviewed': ['notified', 'closed', 'solved', 'deleted'],
+    'deleted': ['reopened'],
+    'notified': ['resolving', 'deleted'],
+    'resolving': ['on_hold', 'closed', 'solved', 'deleted'],
+    'on_hold': ['resolving', 'closed', 'solved', 'deleted'],
+    'closed': ['reopened', 'deleted'],
+    'solved': ['reopened', 'deleted'],
+    'reopened': ['notified', 'closed', 'solved', 'deleted']
+}
+
+def is_valid_status_transition(from_status_value: str, to_status_value: str) -> bool:
+    """
+    Check if a status transition is valid
+    
+    Args:
+        from_status_value: Current status value (e.g., 'created', 'reviewed')
+        to_status_value: Target status value
+        
+    Returns:
+        True if transition is valid, False otherwise
+    """
+    if not from_status_value or not to_status_value:
+        return False
+    
+    from_status = from_status_value.lower()
+    to_status = to_status_value.lower()
+    
+    # Same status is always valid (no change)
+    if from_status == to_status:
+        return True
+    
+    # Check if transition is in allowed list
+    valid_next_statuses = STATUS_TRANSITIONS.get(from_status, [])
+    return to_status in valid_next_statuses
 
 app = FastAPI(title="Ticket Manager API", version="1.0.0")
 
@@ -52,6 +91,30 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 @app.on_event("startup")
 async def startup_event():
     create_tables()
+    # Initialize missing reference data (statuses, crits, centers, tools)
+    # This ensures new statuses are automatically added on deployment
+    from config_manager import config_manager
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        # Load and initialize statuses from config
+        try:
+            statuses = config_manager.get_statuses()
+            for status_data in statuses:
+                existing = db.query(Status).filter(Status.value == status_data["value"]).first()
+                if not existing:
+                    db_status = Status(**status_data)
+                    db.add(db_status)
+                    print(f"✅ Auto-added missing status: {status_data['desc']} ({status_data['value']})")
+            db.commit()
+        except Exception as e:
+            print(f"⚠️ Warning: Could not auto-initialize statuses on startup: {e}")
+            db.rollback()
+    except Exception as e:
+        print(f"⚠️ Warning: Error during startup initialization: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 # Authentication endpoints
 @app.post("/token", response_model=Token)
@@ -87,7 +150,7 @@ async def read_users_me(current_user: User = Depends(get_current_active_user)):
 @app.post("/users/", response_model=UserModel)
 async def create_user(
     user: UserCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)  # Only level 1 can create users
@@ -101,16 +164,27 @@ async def create_user(
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    hashed_password = get_password_hash(user.password)
+    # Auto-generate password from email (part before @)
+    auto_password = user.email.split('@')[0]
+    hashed_password = get_password_hash(auto_password)
+    
+    # Determine if profile needs completion based on whether optional fields are provided
+    needs_profile_completion = not (user.name and user.surnames and user.role)
+    
     db_user = User(
         username=user.username,
         email=user.email,
         hashed_password=hashed_password,
-        permission_level=user.permission_level,
+        permission_level=user.permission_level if user.permission_level is not None else 4,  # Default to level 4 (Viewer)
+        default_center_id=user.default_center_id,
         name=user.name,
         surnames=user.surnames,
-        default_center_id=user.default_center_id,
-        is_active=True  # New users are active by default
+        phone=user.phone,
+        worktime=user.worktime,
+        role=user.role,
+        is_active=True,  # New users are active by default
+        must_complete_profile=needs_profile_completion,  # Must complete profile if not all info provided
+        must_change_password=True  # Must change password on first login
     )
     db.add(db_user)
     db.commit()
@@ -119,17 +193,27 @@ async def create_user(
 
 @app.get("/users/", response_model=List[UserModel])
 async def get_users(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)
     users = db.query(User).all()
     return users
 
+@app.get("/users/list", response_model=List[UserModel])
+async def get_users_list(
+    current_user: User = Depends(get_current_complete_user),
+    db: Session = Depends(get_db)
+):
+    """Get list of users for dropdown selection (permission level 2+)"""
+    check_permission(current_user, 2)
+    users = db.query(User).filter(User.is_active == True).all()
+    return users
+
 @app.put("/users/me", response_model=UserModel)
 async def update_current_user(
     user_update: UserUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     # Update only the fields that are provided
@@ -148,11 +232,61 @@ async def update_current_user(
     db.refresh(current_user)
     return current_user
 
+@app.post("/users/me/complete-profile", response_model=UserModel)
+async def complete_profile(
+    profile_data: ProfileCompleteRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Complete user profile on first login"""
+    # Validate role
+    valid_roles = ["administratiu", "Metge de familia", "Infermeria"]
+    if profile_data.role not in valid_roles:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+    
+    # Validate center if provided
+    if profile_data.default_center_id is not None:
+        center = db.query(Center).filter(Center.id == profile_data.default_center_id).first()
+        if not center:
+            raise HTTPException(status_code=400, detail="Invalid center_id")
+    
+    # Update user profile
+    current_user.name = profile_data.name
+    current_user.surnames = profile_data.surnames
+    current_user.role = profile_data.role
+    current_user.default_center_id = profile_data.default_center_id
+    current_user.phone = profile_data.phone
+    current_user.worktime = profile_data.worktime
+    current_user.must_complete_profile = False
+    
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+@app.post("/users/me/change-first-password", response_model=UserModel)
+async def change_first_password(
+    password_data: FirstPasswordChange,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Change password on first login"""
+    # Validate password length
+    if len(password_data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+    
+    # Update password
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    current_user.must_change_password = False
+    
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
 @app.put("/users/{user_id}", response_model=UserModel)
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)  # Only level 1 can update other users
@@ -180,7 +314,7 @@ async def update_user(
 @app.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)  # Only level 1 (admin) can delete users
@@ -212,7 +346,7 @@ async def delete_user(
 @app.post("/users/{user_id}/reset-password")
 async def reset_user_password(
     user_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)  # Only level 1 (admin) can reset passwords
@@ -237,7 +371,7 @@ async def reset_user_password(
 @app.get("/users/{user_id}/tickets", response_model=List[TicketWithRelations])
 async def get_user_tickets(
     user_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)  # Only level 1 (admin) can view user tickets
@@ -313,7 +447,7 @@ async def get_user_tickets(
 async def upload_files(
     ticket_id: str,
     files: List[UploadFile] = File(...),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Upload multiple file attachments to a ticket"""
@@ -472,7 +606,7 @@ async def upload_files(
 async def upload_single_file(
     ticket_id: str,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Upload a single file attachment to a ticket (for backward compatibility)"""
@@ -491,7 +625,7 @@ def calculate_file_hash(file_path: str) -> str:
 @app.get("/tickets/{ticket_id}/attachments")
 async def get_ticket_attachments(
     ticket_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Get detailed information about all attachments for a ticket"""
@@ -549,7 +683,7 @@ async def get_ticket_attachments(
 async def view_attachment(
     ticket_id: str,
     file_path: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """View a file attachment from a ticket in browser (requires authentication)"""
@@ -595,7 +729,7 @@ async def view_attachment(
 async def download_attachment(
     ticket_id: str,
     file_path: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Download a file attachment from a ticket (requires authentication)"""
@@ -643,7 +777,7 @@ async def download_attachment(
 async def delete_attachment(
     ticket_id: str,
     filename: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Delete a file attachment from a ticket"""
@@ -788,7 +922,7 @@ async def delete_attachment(
 @app.post("/tickets/", response_model=TicketModel)
 async def create_ticket(
     ticket: TicketCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 2)  # Level 2+ can create tickets
@@ -800,6 +934,10 @@ async def create_ticket(
     ticket_data = ticket.dict()
     if ticket_data.get('center_id') == 0:
         ticket_data['center_id'] = None
+    
+    # Handle optional people - convert None to empty list
+    if ticket_data.get('people') is None:
+        ticket_data['people'] = []
     
     # Set creation date and creator
     ticket_data['creation_date'] = datetime.now().date()
@@ -829,7 +967,7 @@ async def get_tickets(
     sort_order: Optional[str] = None,
     search: Optional[str] = None,
     show_hidden: bool = Query(False, description="Show hidden tickets (discarted, solved, closed, deleted)"),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     query = db.query(Ticket)
@@ -896,8 +1034,11 @@ async def get_tickets(
             search_query = search_query.filter(Ticket.creation_date <= date_to)
         
         # Join tables needed for search
+        from sqlalchemy.orm import aliased
+        NotifierUser = aliased(User)
         search_query = search_query.join(User, Ticket.creator == User.id)
         search_query = search_query.join(Tool, Ticket.tool_id == Tool.id)
+        search_query = search_query.outerjoin(NotifierUser, Ticket.notifier == NotifierUser.id)
         
         # Build search conditions
         search_conditions = [
@@ -908,10 +1049,10 @@ async def get_tickets(
             func.lower(Ticket.id).like(search_term),  # Search in ticket ID
         ]
         
-        # Handle notifier search (only match if notifier is not NULL AND matches)
+        # Handle notifier search by username
         notifier_match = and_(
             Ticket.notifier.isnot(None),
-            func.lower(Ticket.notifier).like(search_term)
+            func.lower(NotifierUser.username).like(search_term)
         )
         search_conditions.append(notifier_match)
         
@@ -1010,8 +1151,8 @@ async def get_tickets(
             "resolution_date": ticket.resolution_date.isoformat() if ticket.resolution_date else None,
             "delete_date": ticket.delete_date.isoformat() if ticket.delete_date else None,
             "modify_reason": ticket.modify_reason,
-            "notifier": ticket.notifier,
-            "people": ticket.people,
+            "notifier": ticket.notifier if isinstance(ticket.notifier, int) else None,
+            "people": ticket.people if ticket.people else [],
             "creator": ticket.creator,
             "pathway": ticket.pathway,
             "supports": ticket.supports,
@@ -1043,7 +1184,14 @@ async def get_tickets(
                 "email": ticket.created_by_user.email,
                 "permission_level": ticket.created_by_user.permission_level,
                 "is_active": ticket.created_by_user.is_active
-            } if ticket.created_by_user else None
+            } if ticket.created_by_user else None,
+            "notifier_user": {
+                "id": ticket.notifier_user.id,
+                "username": ticket.notifier_user.username,
+                "email": ticket.notifier_user.email,
+                "permission_level": ticket.notifier_user.permission_level,
+                "is_active": ticket.notifier_user.is_active
+            } if ticket.notifier_user else None
         }
         ticket_dicts.append(ticket_dict)
     
@@ -1057,7 +1205,7 @@ async def get_tickets(
 @app.get("/tickets/{ticket_id}", response_model=TicketWithRelations)
 async def get_ticket(
     ticket_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
@@ -1084,8 +1232,8 @@ async def get_ticket(
         "resolution_date": ticket.resolution_date.isoformat() if ticket.resolution_date else None,
         "delete_date": ticket.delete_date.isoformat() if ticket.delete_date else None,
         "modify_reason": ticket.modify_reason,
-        "notifier": ticket.notifier,
-        "people": ticket.people,
+        "notifier": ticket.notifier if isinstance(ticket.notifier, int) else None,
+        "people": ticket.people if ticket.people else [],
         "creator": ticket.creator,
         "pathway": ticket.pathway,
         "supports": ticket.supports,
@@ -1117,7 +1265,14 @@ async def get_ticket(
             "email": ticket.created_by_user.email,
             "permission_level": ticket.created_by_user.permission_level,
             "is_active": ticket.created_by_user.is_active
-        } if ticket.created_by_user else None
+        } if ticket.created_by_user else None,
+        "notifier_user": {
+            "id": ticket.notifier_user.id,
+            "username": ticket.notifier_user.username,
+            "email": ticket.notifier_user.email,
+            "permission_level": ticket.notifier_user.permission_level,
+            "is_active": ticket.notifier_user.is_active
+        } if ticket.notifier_user else None
     }
     return ticket_dict
 
@@ -1125,7 +1280,7 @@ async def get_ticket(
 async def update_ticket(
     ticket_id: str,
     ticket_update: TicketUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 2)  # Level 1 (admin) or 2 (editor) can modify tickets
@@ -1157,12 +1312,36 @@ async def update_ticket(
     if 'center_id' in update_data and update_data['center_id'] == 0:
         update_data['center_id'] = None
     
-    # Auto-set resolution date if status changes to solved
+    # Handle optional people - convert None to empty list
+    if 'people' in update_data and update_data['people'] is None:
+        update_data['people'] = []
+    
+    # Validate status transition if status is being changed
     if 'status_id' in update_data and update_data['status_id'] != db_ticket.status_id:
+        current_status = db.query(Status).filter(Status.id == db_ticket.status_id).first()
         new_status = db.query(Status).filter(Status.id == update_data['status_id']).first()
-        if new_status and new_status.value == 'solved':
+        
+        if not new_status:
+            raise HTTPException(status_code=400, detail="Invalid status ID")
+        
+        if current_status and not is_valid_status_transition(current_status.value, new_status.value):
+            # Get valid next status descriptions
+            valid_next_statuses = STATUS_TRANSITIONS.get(current_status.value, [])
+            valid_status_descs = []
+            for status_value in valid_next_statuses:
+                status_obj = db.query(Status).filter(Status.value == status_value).first()
+                if status_obj:
+                    valid_status_descs.append(status_obj.desc)
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status transition: Cannot change from '{current_status.desc}' to '{new_status.desc}'. Valid next statuses: {', '.join(valid_status_descs)}"
+            )
+        
+        # Auto-set resolution date if status changes to solved
+        if new_status.value == 'solved':
             update_data['resolution_date'] = datetime.now().date()
-        elif new_status and new_status.value == 'deleted':
+        elif new_status.value == 'deleted':
             update_data['delete_date'] = datetime.now().date()
     
     # Update modify_date
@@ -1226,7 +1405,7 @@ async def update_ticket(
 @app.delete("/tickets/{ticket_id}")
 async def delete_ticket(
     ticket_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     check_permission(current_user, 1)  # Only level 1 (admin) can delete tickets
@@ -1244,7 +1423,7 @@ async def delete_ticket(
 @app.post("/modifications/", response_model=ModificationModel)
 async def create_modification(
     modification: ModificationCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     # Verify ticket exists
@@ -1261,7 +1440,7 @@ async def create_modification(
 @app.get("/tickets/{ticket_id}/modifications", response_model=GroupedModificationListResponse)
 async def get_ticket_modifications(
     ticket_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     # Verify ticket exists
@@ -1400,7 +1579,7 @@ def get_change_description(field_name: str, new_value: str, db: Session) -> str:
 async def create_comment(
     ticket_id: str,
     comment: CommentCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Create a new comment on a ticket"""
@@ -1450,7 +1629,7 @@ async def create_comment(
 @app.get("/tickets/{ticket_id}/comments", response_model=CommentListResponse)
 async def get_ticket_comments(
     ticket_id: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Get all comments for a ticket, ordered by newest first"""
@@ -1514,7 +1693,9 @@ async def initialize_reference_data(db: Session = Depends(get_db)):
         {"value": "notified", "desc": "Notificada"},
         {"value": "solved", "desc": "Resolta"},
         {"value": "closed", "desc": "Tancada"},
-        {"value": "deleted", "desc": "Eliminada"}
+        {"value": "deleted", "desc": "Eliminada"},
+        {"value": "on_hold", "desc": "Aturada"},
+        {"value": "reopened", "desc": "Reoberta"}
     ]
     
     for status_data in statuses:
@@ -1558,7 +1739,7 @@ async def initialize_reference_data(db: Session = Depends(get_db)):
 # Dashboard statistics endpoint
 @app.get("/dashboard/statistics")
 async def get_dashboard_statistics(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Get dashboard statistics including ticket counts, distributions, and trends"""
@@ -1672,7 +1853,7 @@ async def get_dashboard_statistics(
 # File migration endpoint
 @app.post("/migrate-files")
 async def migrate_files_to_new_structure(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_complete_user),
     db: Session = Depends(get_db)
 ):
     """Migrate existing files from old structure to new ticket-based structure"""

@@ -1,0 +1,225 @@
+/* Base badge styles */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.badge-content {
+  display: inline-block;
+  position: relative;
+  z-index: 1;
+}
+
+/* Size variants */
+.badge-sm {
+  padding: 0.15rem 0.3rem;
+  font-size: 0.65rem;
+}
+
+.badge-md {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.7rem;
+}
+
+.badge-lg {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* Variant styles */
+.badge-outlined {
+  border: 1.5px solid;
+  background-color: transparent;
+}
+
+.badge-solid {
+  border: none;
+}
+
+/* Color definitions for outlined variant */
+.badge-outlined.badge-gray {
+  border-color: #6b7280;
+  background-color: rgba(107, 114, 128, 0.1);
+  color: #6b7280;
+}
+
+.badge-outlined.badge-blue {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.badge-outlined.badge-green {
+  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.badge-outlined.badge-red {
+  border-color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.badge-outlined.badge-purple {
+  border-color: #740ad7;
+  background-color: rgba(116, 10, 215, 0.1);
+  color: #740ad7;
+}
+
+.badge-outlined.badge-magenta {
+  border-color: #d946ef;
+  background-color: rgba(217, 70, 239, 0.1);
+  color: #d946ef;
+}
+
+.badge-outlined.badge-yellow {
+  border-color: #eab308;
+  background-color: rgba(234, 179, 8, 0.1);
+  color: #ca8a04;
+}
+
+.badge-outlined.badge-orange {
+  border-color: #f97316;
+  background-color: rgba(249, 115, 22, 0.1);
+  color: #f97316;
+}
+
+.badge-outlined.badge-black {
+  border-color: #1f2937;
+  background-color: rgba(31, 41, 55, 0.1);
+  color: #1f2937;
+}
+
+/* Color definitions for solid variant */
+.badge-solid.badge-gray {
+  background-color: #6b7280;
+  color: #ffffff;
+}
+
+.badge-solid.badge-blue {
+  background-color: #3b82f6;
+  color: #ffffff;
+}
+
+.badge-solid.badge-green {
+  background-color: #10b981;
+  color: #ffffff;
+}
+
+.badge-solid.badge-red {
+  background-color: #ef4444;
+  color: #ffffff;
+}
+
+.badge-solid.badge-purple {
+  background-color: #740ad7;
+  color: #ffffff;
+}
+
+.badge-solid.badge-magenta {
+  background-color: #d946ef;
+  color: #ffffff;
+}
+
+.badge-solid.badge-yellow {
+  background-color: #eab308;
+  color: #1f2937;
+}
+
+.badge-solid.badge-orange {
+  background-color: #f97316;
+  color: #ffffff;
+}
+
+.badge-solid.badge-black {
+  background-color: #1f2937;
+  color: #ffffff;
+}
+
+/* Custom color support (hex colors) */
+.badge-outlined.badge-custom {
+  border-color: var(--badge-color);
+  background-color: transparent;
+  color: var(--badge-color);
+  position: relative;
+}
+
+.badge-outlined.badge-custom::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: var(--badge-color);
+  opacity: 0.1;
+  border-radius: 9999px;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.badge-solid.badge-custom {
+  background-color: var(--badge-color);
+  color: #ffffff;
+}
+
+/* Remove button */
+.badge-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 0.125rem;
+  border-radius: 50%;
+  transition: all 0.2s;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.badge-remove:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.badge-solid .badge-remove:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Size-specific remove button adjustments */
+.badge-sm .badge-remove {
+  width: 14px;
+  height: 14px;
+}
+
+.badge-sm .badge-remove svg {
+  width: 10px;
+  height: 10px;
+}
+
+.badge-md .badge-remove {
+  width: 16px;
+  height: 16px;
+}
+
+.badge-md .badge-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.badge-lg .badge-remove {
+  width: 18px;
+  height: 18px;
+}
+
+.badge-lg .badge-remove svg {
+  width: 14px;
+  height: 14px;
+}
+

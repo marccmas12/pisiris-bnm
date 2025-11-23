@@ -30,5 +30,13 @@
   {
     "value": "deleted",
     "desc": "Eliminada"
+  },
+  {
+    "value": "on_hold",
+    "desc": "Aturada"
+  },
+  {
+    "value": "reopened",
+    "desc": "Reoberta"
   }
 ]

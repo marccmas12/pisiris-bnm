@@ -5,6 +5,7 @@ import { ticketsAPI, modificationsAPI, commentsAPI, api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext';
 import CommentForm from './CommentForm';
 import CommentList from './CommentList';
+import Badge from './Badge';
 import './TicketDetail.css';
 import { 
   ArrowLeft, 
@@ -78,26 +79,6 @@ const TicketDetail: React.FC = () => {
     }
   }, [id, loadTicket]);
 
-  const getStatusColor = (statusValue: string) => {
-    switch (statusValue) {
-      case 'created': return 'bg-blue-500';
-      case 'reviewed': return 'bg-yellow-500';
-      case 'resolving': return 'bg-blue-600';
-      case 'notified': return 'bg-green-500';
-      case 'discarted': return 'bg-red-500';
-      default: return 'bg-gray-500';
-    }
-  };
-
-  const getCritColor = (critValue: string) => {
-    switch (critValue) {
-      case 'low': return 'bg-green-500';
-      case 'mid': return 'bg-yellow-500';
-      case 'high': return 'bg-orange-500';
-      case 'critical': return 'bg-red-600';
-      default: return 'bg-gray-500';
-    }
-  };
 
   const getPathwayLabel = (pathway: string) => {
     const pathwayLabels: Record<string, string> = {
@@ -224,9 +205,9 @@ const TicketDetail: React.FC = () => {
                   <h1 className="text-2xl font-bold text-gray-900">
                     Ticket #{ticket.id}
                   </h1>
-                  <span className={`px-3 py-1 rounded-full text-white text-sm font-medium ${getStatusColor(ticket.status.value)}`}>
+                  <Badge type="status" value={ticket.status.value}>
                     {ticket.status.desc}
-                  </span>
+                  </Badge>
                 </div>
                 <p className="text-lg text-gray-600 mt-1">{ticket.title}</p>
               </div>
@@ -392,9 +373,9 @@ const TicketDetail: React.FC = () => {
                   </div>
                   <div>
                     <p className="text-sm text-gray-500">Prioritat</p>
-                    <span className={`px-2 py-1 rounded-full text-white text-xs font-medium ${getCritColor(ticket.crit.value)}`}>
+                    <Badge type="criticity" value={ticket.crit.value}>
                       {ticket.crit.desc}
-                    </span>
+                    </Badge>
                   </div>
                 </div>
 
@@ -468,29 +449,36 @@ const TicketDetail: React.FC = () => {
             )}
 
             {/* Notifier Section */}
-            {ticket.notifier && (
+            {ticket.notifier_user && (
               <div className="bg-white rounded-lg shadow-sm border p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Notificador</h3>
                 <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg">
-                  <p className="text-yellow-800 font-medium">{ticket.notifier}</p>
+                  <p className="text-yellow-800 font-medium">
+                    {ticket.notifier_user.username}
+                    {ticket.notifier_user.name && (
+                      <span className="text-yellow-600"> ({ticket.notifier_user.name} {ticket.notifier_user.surnames || ''})</span>
+                    )}
+                  </p>
                 </div>
               </div>
             )}
 
             {/* People Section */}
-            <div className="bg-white rounded-lg shadow-sm border p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Persones involucrades</h3>
-              <div className="flex flex-wrap gap-2">
-                {ticket.people.map((person, index) => (
-                  <span 
-                    key={index} 
-                    className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium"
-                  >
-                    {person}
-                  </span>
-                ))}
+            {ticket.people && ticket.people.length > 0 && (
+              <div className="bg-white rounded-lg shadow-sm border p-6">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Persones involucrades</h3>
+                <ul className="space-y-2">
+                  {ticket.people.map((person, index) => (
+                    <li 
+                      key={index} 
+                      className="text-gray-700 border-b border-gray-200 pb-2 last:border-b-0 last:pb-0"
+                    >
+                      {person}
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

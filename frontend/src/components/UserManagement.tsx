@@ -5,6 +5,7 @@ import { usersAPI, referenceAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { Plus, Edit, Trash2, Key, Search, X, XCircle, CircleCheck, MoreHorizontal, UserX, UserCheck, AlertTriangle } from 'lucide-react';
 import UserForm from './UserForm';
+import Badge from './Badge';
 import './UserManagement.css';
 
 const UserManagement: React.FC = () => {
@@ -302,9 +303,9 @@ const UserManagement: React.FC = () => {
                     onClick={() => handleViewUser(user.id)}
                   >
                     <td>
-                      <span className={`permission-badge level-${user.permission_level}`}>
+                      <Badge type="permission" value={user.permission_level}>
                         {getPermissionLevelLabel(user.permission_level)}
-                      </span>
+                      </Badge>
                     </td>
                     <td>{user.name || '-'}</td>
                     <td>{user.surnames || '-'}</td>

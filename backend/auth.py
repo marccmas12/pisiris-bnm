@@ -63,6 +63,23 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
 
+async def get_current_complete_user(current_user: User = Depends(get_current_active_user)):
+    """
+    Check if user has completed their profile and changed their password.
+    Use this dependency for protected routes that require full setup.
+    """
+    if current_user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="must_change_password"
+        )
+    if current_user.must_complete_profile:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="must_complete_profile"
+        )
+    return current_user
+
 def check_permission(user: User, required_level: int):
     """Check if user has required permission level"""
     if user.permission_level > required_level:

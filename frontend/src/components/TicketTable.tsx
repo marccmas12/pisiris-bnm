@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { TicketWithRelations, Status, Crit, Center, Tool } from '../types';
-import { ticketsAPI, referenceAPI } from '../services/api';
+import { TicketWithRelations, Status, Crit, Center, Tool, User } from '../types';
+import { ticketsAPI, referenceAPI, usersAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   Edit, 
@@ -10,6 +10,7 @@ import {
   Filter, 
   ChevronUp, 
   ChevronDown, 
+  ChevronRight,
   Paperclip, 
   ExternalLink,
   Info,
@@ -19,10 +20,20 @@ import {
   AlertOctagon,
   Search,
   X,
-  MessageSquare
+  MessageSquare,
+  RotateCw,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Pause,
+  Play,
+  FileX
 } from 'lucide-react';
+import Toggle from './Toggle';
 import FilterDialog, { FilterValues } from './FilterDialog';
 import FilterBadge from './FilterBadge';
+import Badge from './Badge';
+import { getValidNextStatuses } from '../utils/statusTransitions';
 import './TicketTable.css';
 
 const TicketTable: React.FC = () => {
@@ -103,13 +114,24 @@ const TicketTable: React.FC = () => {
   const [crits, setCrits] = useState<Crit[]>([]);
   const [centers, setCenters] = useState<Center[]>([]);
   const [tools, setTools] = useState<Tool[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const wasSearchInputFocusedRef = useRef(false);
   const cursorPositionRef = useRef<number | null>(null);
   const [descriptionPopover, setDescriptionPopover] = useState<string | null>(null);
   const [actionDropdown, setActionDropdown] = useState<string | null>(null);
+  const [statusSubmenuOpen, setStatusSubmenuOpen] = useState<string | null>(null);
+  const [submenuPosition, setSubmenuPosition] = useState<{x: number, y: number}>({x: 0, y: 0});
   const [popoverPosition, setPopoverPosition] = useState<{top: boolean, left: boolean, right: boolean, x: number, y: number}>({top: false, left: false, right: false, x: 0, y: 0});
   const [dropdownPosition, setDropdownPosition] = useState<{top: boolean, left: boolean, x: number, y: number}>({top: false, left: false, x: 0, y: 0});
+  
+  // Notifier modal state
+  const [showNotifierModal, setShowNotifierModal] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ticketId: string, statusId: number} | null>(null);
+  const [isNotifiedByMe, setIsNotifiedByMe] = useState(false);
+  const [selectedNotifierUserId, setSelectedNotifierUserId] = useState<number | undefined>(undefined);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   // Sync state from URL when URL changes (for browser back/forward)
   // Use a ref to track if this is the initial mount
@@ -217,16 +239,18 @@ const TicketTable: React.FC = () => {
 
   const loadReferenceData = useCallback(async () => {
     try {
-      const [statusesData, critsData, centersData, toolsData] = await Promise.all([
+      const [statusesData, critsData, centersData, toolsData, usersData] = await Promise.all([
         referenceAPI.getStatuses(),
         referenceAPI.getCrits(),
         referenceAPI.getCenters(),
         referenceAPI.getTools(),
+        usersAPI.getUsersList(),
       ]);
       setStatuses(statusesData);
       setCrits(critsData);
       setCenters(centersData);
       setTools(toolsData);
+      setUsers(usersData);
     } catch (err) {
       console.error('Error loading reference data:', err);
     }
@@ -282,6 +306,44 @@ const TicketTable: React.FC = () => {
       });
     }
   }, [tickets, searchQuery]);
+
+  // Close dropdown and submenu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (
+        actionDropdown &&
+        !target.closest('.multiaction-container') &&
+        !target.closest('.action-dropdown') &&
+        !target.closest('.status-submenu')
+      ) {
+        setActionDropdown(null);
+        setStatusSubmenuOpen(null);
+      }
+    };
+
+    if (actionDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [actionDropdown]);
+
+  // Close user dropdown when clicking outside (for notifier modal)
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (showUserDropdown && !target.closest('#notifier_user') && !target.closest('[style*="position: absolute"]')) {
+        setShowUserDropdown(false);
+      }
+    };
+    
+    if (showUserDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showUserDropdown]);
 
   const handleApplyFilters = (newFilters: FilterValues) => {
     setFilters(newFilters);
@@ -343,28 +405,105 @@ const TicketTable: React.FC = () => {
   };
 
   const handleDeleteTicket = async (ticketId: string) => {
-    if (!window.confirm('Are you sure you want to delete this ticket?')) {
+    if (!window.confirm('Estàs segur que vols marcar aquest ticket com a eliminat?')) {
       return;
     }
 
     try {
-      await ticketsAPI.deleteTicket(ticketId);
+      // Find the deleted status
+      const deletedStatus = statuses.find(s => s.value === 'deleted');
+      if (!deletedStatus) {
+        setError('No s\'ha trobat l\'estat "Eliminada"');
+        return;
+      }
+
+      // Update the ticket status to deleted
+      await ticketsAPI.updateTicket(ticketId, { status_id: deletedStatus.id });
+      
+      // Close dropdown
+      setActionDropdown(null);
+      setStatusSubmenuOpen(null);
+      
+      // Reload tickets to reflect the change
       loadTickets();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error deleting ticket');
+      setError(err.response?.data?.detail || 'Error marcant el ticket com a eliminat');
     }
   };
 
-  const getStatusColor = (statusValue: string) => {
-    switch (statusValue) {
-      case 'created': return '#17a2b8';
-      case 'reviewed': return '#ffc107';
-      case 'resolving': return '#007bff';
-      case 'notified': return '#28a745';
-      case 'discarted': return '#dc3545';
-      default: return '#6c757d';
+  const handleStatusChange = async (ticketId: string, newStatusId: number) => {
+    // Check if the new status is "notified"
+    const newStatus = statuses.find(s => s.id === newStatusId);
+    
+    if (newStatus && newStatus.value === 'notified') {
+      // Show notifier modal
+      setPendingStatusChange({ ticketId, statusId: newStatusId });
+      setShowNotifierModal(true);
+      // Reset notifier state
+      setIsNotifiedByMe(false);
+      setSelectedNotifierUserId(undefined);
+      setUserSearchQuery('');
+      setShowUserDropdown(false);
+    } else {
+      // Direct status change for non-notified statuses
+      await performStatusChange(ticketId, newStatusId, undefined);
     }
   };
+
+  const performStatusChange = async (ticketId: string, newStatusId: number, notifierId?: number) => {
+    try {
+      // Prepare update data
+      const updateData: { status_id: number; notifier?: number } = { status_id: newStatusId };
+      if (notifierId !== undefined) {
+        updateData.notifier = notifierId;
+      }
+
+      // Update the ticket status
+      await ticketsAPI.updateTicket(ticketId, updateData);
+      
+      // Close submenu, dropdown, and modal
+      setStatusSubmenuOpen(null);
+      setActionDropdown(null);
+      setShowNotifierModal(false);
+      setPendingStatusChange(null);
+      
+      // Reload tickets to reflect the change
+      loadTickets();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Error updating ticket status');
+      setStatusSubmenuOpen(null);
+      setActionDropdown(null);
+      setShowNotifierModal(false);
+      setPendingStatusChange(null);
+    }
+  };
+
+  const handleNotifierModalSubmit = async () => {
+    if (!pendingStatusChange) return;
+
+    // Validate notifier selection
+    let notifierId: number | undefined;
+    if (isNotifiedByMe && user) {
+      notifierId = user.id;
+    } else if (!isNotifiedByMe && selectedNotifierUserId) {
+      notifierId = selectedNotifierUserId;
+    } else {
+      setError('Si us plau, selecciona qui ha notificat');
+      return;
+    }
+
+    await performStatusChange(pendingStatusChange.ticketId, pendingStatusChange.statusId, notifierId);
+  };
+
+  const handleNotifierModalCancel = () => {
+    setShowNotifierModal(false);
+    setPendingStatusChange(null);
+    setIsNotifiedByMe(false);
+    setSelectedNotifierUserId(undefined);
+    setUserSearchQuery('');
+    setShowUserDropdown(false);
+  };
+
 
   const getCritIcon = (critValue: string) => {
     switch (critValue) {
@@ -432,6 +571,7 @@ const TicketTable: React.FC = () => {
     
     if (actionDropdown === ticketId) {
       setActionDropdown(null);
+      setStatusSubmenuOpen(null);
       setDropdownPosition({top: false, left: false, x: 0, y: 0});
       return;
     }
@@ -642,12 +782,9 @@ const TicketTable: React.FC = () => {
                   )}
                 </td>
                 <td>
-                  <span 
-                    className="status-badge"
-                    style={{ backgroundColor: getStatusColor(ticket.status.value) }}
-                  >
+                  <Badge type="status" value={ticket.status.value}>
                     {ticket.status.desc}
-                  </span>
+                  </Badge>
                 </td>
                 <td>{new Date(ticket.creation_date).toLocaleDateString()}</td>
                 <td>{ticket.tool.desc}</td>
@@ -698,24 +835,145 @@ const TicketTable: React.FC = () => {
                         >
                           <MoreHorizontal size={16} />
                         </button>
-                        {actionDropdown === ticket.id && (
-                          <div className={`action-dropdown ${dropdownPosition.top ? 'top' : ''} ${dropdownPosition.left ? 'left' : ''}`} style={{ top: dropdownPosition.y, left: dropdownPosition.x }}>
-                            <button
-                              className="dropdown-item edit"
-                              onClick={() => handleEditTicket(ticket.id)}
-                            >
-                              <Edit size={16} />
-                              Editar
-                            </button>
-                            <button
-                              className="dropdown-item delete"
-                              onClick={() => handleDeleteTicket(ticket.id)}
-                            >
-                              <Trash2 size={16} />
-                              Eliminar
-                            </button>
-                          </div>
-                        )}
+                        {actionDropdown === ticket.id && (() => {
+                          // Get valid next statuses (excluding deleted, as it's in main menu)
+                          const currentStatus = statuses.find(s => s.id === ticket.status_id);
+                          const currentStatusValue = currentStatus?.value || '';
+                          const validNextStatuses = getValidNextStatuses(currentStatusValue);
+                          const availableStatuses = statuses.filter(status => 
+                            validNextStatuses.includes(status.value) && status.value !== 'deleted'
+                          );
+
+                          // Helper function to get icon for status
+                          const getStatusIcon = (statusValue: string) => {
+                            switch (statusValue) {
+                              case 'created': return <FileX size={16} />;
+                              case 'reviewed': return <CheckCircle size={16} />;
+                              case 'notified': return <AlertCircle size={16} />;
+                              case 'resolving': return <RotateCw size={16} />;
+                              case 'on_hold': return <Pause size={16} />;
+                              case 'solved': return <CheckCircle size={16} />;
+                              case 'closed': return <XCircle size={16} />;
+                              case 'reopened': return <Play size={16} />;
+                              default: return <Clock size={16} />;
+                            }
+                          };
+
+                          // If only one status option, show it directly in main menu
+                          const showStatusDirectly = availableStatuses.length === 1;
+                          const singleStatus = showStatusDirectly ? availableStatuses[0] : null;
+
+                          return (
+                            <div className={`action-dropdown ${dropdownPosition.top ? 'top' : ''} ${dropdownPosition.left ? 'left' : ''}`} style={{ top: dropdownPosition.y, left: dropdownPosition.x }}>
+                              <button
+                                className="dropdown-item edit"
+                                onClick={() => handleEditTicket(ticket.id)}
+                              >
+                                <Edit size={16} />
+                                <span>Editar</span>
+                              </button>
+                              
+                              {showStatusDirectly && singleStatus ? (
+                                <button
+                                  className="dropdown-item"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStatusChange(ticket.id, singleStatus.id);
+                                  }}
+                                >
+                                  {getStatusIcon(singleStatus.value)}
+                                  <span>Canviar a {singleStatus.desc}</span>
+                                </button>
+                              ) : availableStatuses.length > 0 ? (
+                                <div 
+                                  className="dropdown-item-with-submenu"
+                                  onMouseEnter={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const viewportWidth = window.innerWidth;
+                                    const submenuWidth = 160;
+                                    
+                                    // Position submenu to the right by default, or left if not enough space
+                                    let x = rect.right + 4;
+                                    if (x + submenuWidth > viewportWidth) {
+                                      x = rect.left - submenuWidth - 4;
+                                    }
+                                    
+                                    setSubmenuPosition({
+                                      x: x,
+                                      y: rect.top
+                                    });
+                                    setStatusSubmenuOpen(ticket.id);
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    // Only close if we're not moving to the submenu
+                                    const relatedTarget = e.relatedTarget as HTMLElement;
+                                    if (!relatedTarget || !relatedTarget.closest('.status-submenu')) {
+                                      setStatusSubmenuOpen(null);
+                                    }
+                                  }}
+                                >
+                                  <button
+                                    className="dropdown-item"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const rect = e.currentTarget.closest('.dropdown-item-with-submenu')?.getBoundingClientRect();
+                                      if (rect) {
+                                        const viewportWidth = window.innerWidth;
+                                        const submenuWidth = 160;
+                                        
+                                        // Position submenu to the right by default, or left if not enough space
+                                        let x = rect.right + 4;
+                                        if (x + submenuWidth > viewportWidth) {
+                                          x = rect.left - submenuWidth - 4;
+                                        }
+                                        
+                                        setSubmenuPosition({
+                                          x: x,
+                                          y: rect.top
+                                        });
+                                      }
+                                      setStatusSubmenuOpen(statusSubmenuOpen === ticket.id ? null : ticket.id);
+                                    }}
+                                  >
+                                    <RotateCw size={16} />
+                                    <span>Canviar Estat</span>
+                                    <ChevronRight size={16} />
+                                  </button>
+                                  {statusSubmenuOpen === ticket.id && (
+                                    <div 
+                                      className="status-submenu"
+                                      style={{ left: submenuPosition.x, top: submenuPosition.y }}
+                                      onMouseEnter={() => setStatusSubmenuOpen(ticket.id)}
+                                      onMouseLeave={() => setStatusSubmenuOpen(null)}
+                                    >
+                                      {availableStatuses.map(status => (
+                                        <button
+                                          key={status.id}
+                                          className="dropdown-item"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleStatusChange(ticket.id, status.id);
+                                          }}
+                                        >
+                                          {getStatusIcon(status.value)}
+                                          <span>{status.desc}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : null}
+                              
+                              <button
+                                className="dropdown-item delete"
+                                onClick={() => handleDeleteTicket(ticket.id)}
+                              >
+                                <Trash2 size={16} />
+                                <span>Eliminar</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
@@ -766,6 +1024,144 @@ const TicketTable: React.FC = () => {
         onApplyFilters={handleApplyFilters}
         currentFilters={filters}
       />
+
+      {/* Notifier Modal */}
+      {showNotifierModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>Seleccionar Notificador</h3>
+            </div>
+            <div className="modal-body">
+              <p>Per canviar l'estat a "Notificada", si us plau indica qui ha notificat:</p>
+              
+              <div style={{ marginTop: '1.5rem' }}>
+                <Toggle
+                  id="is_notified_by_me"
+                  checked={isNotifiedByMe}
+                  onChange={setIsNotifiedByMe}
+                  label="Ho has notificat tu?"
+                />
+                
+                {!isNotifiedByMe && (
+                  <div style={{ position: 'relative', marginTop: '12px' }}>
+                    <label htmlFor="notifier_user" style={{ display: 'block', marginBottom: '8px' }}>
+                      Selecciona qui ha notificat: *
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        id="notifier_user"
+                        value={userSearchQuery}
+                        onChange={(e) => {
+                          setUserSearchQuery(e.target.value);
+                          setShowUserDropdown(true);
+                        }}
+                        onFocus={() => setShowUserDropdown(true)}
+                        placeholder="Cerca un usuari..."
+                        style={{ width: '100%', padding: '8px', paddingRight: '32px' }}
+                      />
+                      <Search 
+                        size={16} 
+                        style={{ 
+                          position: 'absolute', 
+                          right: '8px', 
+                          top: '50%', 
+                          transform: 'translateY(-50%)',
+                          pointerEvents: 'none',
+                          color: '#666'
+                        }} 
+                      />
+                      {showUserDropdown && (
+                        <div 
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            left: 0,
+                            right: 0,
+                            backgroundColor: 'white',
+                            border: '1px solid #ddd',
+                            borderRadius: '4px',
+                            maxHeight: '200px',
+                            overflowY: 'auto',
+                            zIndex: 1000,
+                            marginTop: '4px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                          }}
+                        >
+                          {users
+                            .filter(u => 
+                              !userSearchQuery || 
+                              u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+                              (u.name && u.name.toLowerCase().includes(userSearchQuery.toLowerCase())) ||
+                              (u.surnames && u.surnames.toLowerCase().includes(userSearchQuery.toLowerCase()))
+                            )
+                            .map(u => (
+                              <div
+                                key={u.id}
+                                onClick={() => {
+                                  setSelectedNotifierUserId(u.id);
+                                  setUserSearchQuery(u.username + (u.name ? ` (${u.name} ${u.surnames || ''})` : ''));
+                                  setShowUserDropdown(false);
+                                }}
+                                style={{
+                                  padding: '8px 12px',
+                                  cursor: 'pointer',
+                                  backgroundColor: selectedNotifierUserId === u.id ? '#e3f2fd' : 'white',
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (selectedNotifierUserId !== u.id) {
+                                    e.currentTarget.style.backgroundColor = '#f5f5f5';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (selectedNotifierUserId !== u.id) {
+                                    e.currentTarget.style.backgroundColor = 'white';
+                                  }
+                                }}
+                              >
+                                {u.username}{u.name ? ` (${u.name} ${u.surnames || ''})` : ''}
+                              </div>
+                            ))}
+                          {users.filter(u => 
+                            !userSearchQuery || 
+                            u.username.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+                            (u.name && u.name.toLowerCase().includes(userSearchQuery.toLowerCase())) ||
+                            (u.surnames && u.surnames.toLowerCase().includes(userSearchQuery.toLowerCase()))
+                          ).length === 0 && (
+                            <div style={{ padding: '8px 12px', color: '#666' }}>
+                              No s'han trobat usuaris
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  onClick={handleNotifierModalCancel}
+                  className="cancel-button"
+                >
+                  Cancel·lar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNotifierModalSubmit}
+                  className="submit-button"
+                  disabled={!isNotifiedByMe && !selectedNotifierUserId}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

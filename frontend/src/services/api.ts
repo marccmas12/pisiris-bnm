@@ -17,7 +17,9 @@ import {
   Tool,
   CommentWithUser,
   CommentCreate,
-  CommentListResponse
+  CommentListResponse,
+  ProfileCompleteRequest,
+  FirstPasswordChange
 } from '../types';
 
 const API_BASE_URL = 'http://localhost:8000';
@@ -39,7 +41,7 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 responses by logging out the user
+// Handle 401 and 403 responses
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -50,6 +52,14 @@ api.interceptors.response.use(
       // Dispatch custom event to notify auth context
       window.dispatchEvent(new CustomEvent('auth:logout'));
       console.log('User logged out due to 401 response');
+    } else if (error.response?.status === 403) {
+      const detail = error.response?.data?.detail;
+      // Check if user needs to complete profile or change password
+      if (detail === 'must_complete_profile' || detail === 'must_change_password') {
+        console.log('User needs to complete setup, redirecting...');
+        // Trigger auth refresh to check user state
+        window.dispatchEvent(new CustomEvent('auth:incomplete'));
+      }
     }
     return Promise.reject(error);
   }
@@ -114,6 +124,21 @@ export const usersAPI = {
 
   toggleUserStatus: async (userId: number, isActive: boolean): Promise<User> => {
     const response = await api.put(`/users/${userId}`, { is_active: isActive });
+    return response.data;
+  },
+
+  getUsersList: async (): Promise<User[]> => {
+    const response = await api.get('/users/list');
+    return response.data;
+  },
+
+  completeProfile: async (profileData: ProfileCompleteRequest): Promise<User> => {
+    const response = await api.post('/users/me/complete-profile', profileData);
+    return response.data;
+  },
+
+  changeFirstPassword: async (passwordData: FirstPasswordChange): Promise<User> => {
+    const response = await api.post('/users/me/change-first-password', passwordData);
     return response.data;
   },
 };

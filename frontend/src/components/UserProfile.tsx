@@ -4,6 +4,7 @@ import { User, TicketWithRelations } from '../types';
 import { usersAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, User as UserIcon, Ticket } from 'lucide-react';
+import Badge from './Badge';
 import './UserProfile.css';
 
 const UserProfile: React.FC = () => {
@@ -106,9 +107,9 @@ const UserProfile: React.FC = () => {
             </div>
             <div className="user-info-title">
               <h2>{user.username}</h2>
-              <span className={`permission-badge level-${user.permission_level}`}>
+              <Badge type="permission" value={user.permission_level}>
                 {getPermissionLevelLabel(user.permission_level)}
-              </span>
+              </Badge>
             </div>
           </div>
 
@@ -129,11 +130,29 @@ const UserProfile: React.FC = () => {
                 <span className="info-value">{user.surnames}</span>
               </div>
             )}
+            {user.role && (
+              <div className="info-row">
+                <span className="info-label">Rol:</span>
+                <span className="info-value">{user.role}</span>
+              </div>
+            )}
+            {user.phone && (
+              <div className="info-row">
+                <span className="info-label">Telèfon:</span>
+                <span className="info-value">{user.phone}</span>
+              </div>
+            )}
+            {user.worktime && (
+              <div className="info-row">
+                <span className="info-label">Horari laboral:</span>
+                <span className="info-value" style={{ whiteSpace: 'pre-wrap' }}>{user.worktime}</span>
+              </div>
+            )}
             <div className="info-row">
               <span className="info-label">Estat:</span>
-              <span className={`status-badge ${user.is_active ? 'active' : 'inactive'}`}>
+              <Badge type="user-status" value={user.is_active ? 'active' : 'inactive'}>
                 {user.is_active ? 'Actiu' : 'Inactiu'}
-              </span>
+              </Badge>
             </div>
           </div>
         </div>
@@ -160,9 +179,9 @@ const UserProfile: React.FC = () => {
                 >
                   <div className="ticket-header">
                     <span className="ticket-id">{ticket.id}</span>
-                    <span className={`ticket-type ${ticket.type}`}>
+                    <Badge type="ticket-type" value={ticket.type}>
                       {ticket.type === 'incidence' ? 'Incidència' : 'Suggeriment'}
-                    </span>
+                    </Badge>
                   </div>
                   <h4 className="ticket-title">{ticket.title}</h4>
                   <div className="ticket-meta">

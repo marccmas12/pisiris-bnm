@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Settings, LogOut, LayoutGrid } from 'lucide-react';
+import { User as UserIcon, LogOut } from 'lucide-react';
 import { User } from '../types';
 import Avatar from './Avatar';
 import DropdownMenu from './DropdownMenu';
-import UserConfigModal from './UserConfigModal';
+import logoImage from '../assets/images/group-R5.svg';
 import './Navigation.css';
 
 interface NavigationProps {
@@ -17,29 +17,22 @@ const Navigation: React.FC<NavigationProps> = ({ user, onLogout, onUserUpdated }
   const navigate = useNavigate();
   const location = useLocation();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
 
   const handleLogout = () => {
     onLogout();
     navigate('/login');
   };
 
-  const handleConfigClick = () => {
-    setIsConfigModalOpen(true);
+  const handleProfileClick = () => {
+    navigate('/profile');
     setIsDropdownOpen(false);
-  };
-
-  const handleUserUpdated = (updatedUser: User) => {
-    if (onUserUpdated) {
-      onUserUpdated(updatedUser);
-    }
   };
 
   const dropdownItems = [
     {
-      label: 'Configuració',
-      onClick: handleConfigClick,
-      icon: <Settings size={16} />
+      label: 'El meu perfil',
+      onClick: handleProfileClick,
+      icon: <UserIcon size={16} />
     },
     {
       label: 'Sortir',
@@ -51,6 +44,10 @@ const Navigation: React.FC<NavigationProps> = ({ user, onLogout, onUserUpdated }
 
   // Determine active tab based on current route
   const getActiveTab = () => {
+    // No tab selected on dashboard
+    if (location.pathname === '/dashboard') {
+      return null;
+    }
     if (location.pathname.startsWith('/users')) {
       return 'users';
     }
@@ -63,8 +60,8 @@ const Navigation: React.FC<NavigationProps> = ({ user, onLogout, onUserUpdated }
       }
       return 'incidences';
     }
-    // Default to incidences
-    return 'incidences';
+    // No tab selected for other routes
+    return null;
   };
 
   const activeTab = getActiveTab();
@@ -88,7 +85,11 @@ const Navigation: React.FC<NavigationProps> = ({ user, onLogout, onUserUpdated }
         <div className="nav-container">
           <div className="nav-brand">
             <div className="brand-icon" onClick={() => navigate('/dashboard')}>
-              <LayoutGrid size={24} />
+              <img
+                src={logoImage}
+                alt="Logo ICS"
+                style={{ height: 32, width: 'auto', display: 'block' }}
+              />
             </div>
             <div className="nav-tabs">
               <button
@@ -133,13 +134,6 @@ const Navigation: React.FC<NavigationProps> = ({ user, onLogout, onUserUpdated }
           </div>
         </div>
       </nav>
-
-      <UserConfigModal
-        user={user}
-        isOpen={isConfigModalOpen}
-        onClose={() => setIsConfigModalOpen(false)}
-        onUserUpdated={handleUserUpdated}
-      />
     </>
   );
 };

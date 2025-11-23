@@ -10,9 +10,20 @@ class UserBase(BaseModel):
     surnames: Optional[str] = None
     permission_level: int = 3
     default_center_id: Optional[int] = None
+    phone: Optional[str] = None
+    worktime: Optional[str] = None
+    role: Optional[str] = None
 
-class UserCreate(UserBase):
-    password: str
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    permission_level: Optional[int] = 3
+    name: Optional[str] = None
+    surnames: Optional[str] = None
+    phone: Optional[str] = None
+    worktime: Optional[str] = None
+    role: Optional[str] = None
+    default_center_id: Optional[int] = None
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
@@ -23,10 +34,17 @@ class UserUpdate(BaseModel):
     default_center_id: Optional[int] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
+    phone: Optional[str] = None
+    worktime: Optional[str] = None
+    role: Optional[str] = None
+    must_complete_profile: Optional[bool] = None
+    must_change_password: Optional[bool] = None
 
 class User(UserBase):
     id: int
     is_active: bool
+    must_complete_profile: bool = False
+    must_change_password: bool = False
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,8 +73,8 @@ class TicketBase(BaseModel):
     crit_id: int
     center_id: Optional[int] = None
     tool_id: int
-    notifier: Optional[str] = None
-    people: List[str]
+    notifier: Optional[int] = None  # User ID who notified
+    people: Optional[List[str]] = None  # Array of strings, optional
     pathway: str
     attached: Optional[List[FileAttachment]] = None
 
@@ -70,8 +88,8 @@ class TicketCreate(BaseModel):
     crit_id: int
     center_id: Optional[int] = None
     tool_id: int
-    notifier: Optional[str] = None
-    people: List[str]
+    notifier: Optional[int] = None  # User ID who notified
+    people: Optional[List[str]] = None  # Array of strings, optional
     pathway: str
 
 class TicketUpdate(BaseModel):
@@ -84,7 +102,7 @@ class TicketUpdate(BaseModel):
     crit_id: Optional[int] = None
     center_id: Optional[int] = None
     tool_id: Optional[int] = None
-    notifier: Optional[str] = None
+    notifier: Optional[int] = None  # User ID who notified
     people: Optional[List[str]] = None
     pathway: Optional[str] = None
 
@@ -117,14 +135,15 @@ class TicketWithRelations(BaseModel):
     resolution_date: Optional[date] = None
     delete_date: Optional[date] = None
     modify_reason: Optional[str] = None
-    notifier: Optional[str] = None
-    people: List[str]
+    notifier: Optional[int] = None  # User ID who notified
+    people: Optional[List[str]] = None  # Array of strings, optional
     creator: int
     pathway: str
     supports: int
     attached: Optional[List[FileAttachment]] = None
     comments_count: Optional[int] = 0  # Number of comments for this ticket
     created_by_user: 'User'
+    notifier_user: Optional['User'] = None  # User object for notifier
     status: 'Status'
     crit: 'Crit'
     center: Optional['Center'] = None
@@ -196,6 +215,17 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+class ProfileCompleteRequest(BaseModel):
+    name: str
+    surnames: str
+    role: str
+    default_center_id: Optional[int] = None
+    phone: Optional[str] = None
+    worktime: Optional[str] = None
+
+class FirstPasswordChange(BaseModel):
+    new_password: str
 
 # Response models
 class TicketListResponse(BaseModel):

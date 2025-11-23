@@ -7,7 +7,7 @@ const Footer: React.FC = () => {
   return (
     <footer className="footer">
       <div className="footer-content">
-        <span>Aplicació d'ús intern per la Gerècnia d'Atenció Pimària i Comunitària de Barcelonés nord i Maresme • © {currentYear} GAPiCBNM • Construït i desenvolupat per Marc Carrera Mas</span>
+        <span>Aplicació d'ús intern per la Gerència d'Atenció Pimària i Comunitària de Barcelonés nord i Maresme • © {currentYear} GAPiCBNM • Construït i desenvolupat per Marc Carrera Mas.</span>
       </div>
     </footer>
   );
